@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: viral-ai-ad-generator
+    runtime: node
+    plan: free
+    buildCommand: npm run install-all && npm run build
+    startCommand: npm run start
+    envVars:
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: KLING_API_KEY
+        sync: false
