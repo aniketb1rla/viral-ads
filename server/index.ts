@@ -254,6 +254,7 @@ Ensure the product in the generated scene looks exactly like the reference produ
     };
 
     console.log('Generating image using Nano Banana Pro (gemini-3-pro-image)...');
+    let response;
     try {
       response = await axios.post(urlEndpoint, payload);
     } catch (apiError: any) {
