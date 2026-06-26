@@ -513,10 +513,7 @@ app.post('/api/animate-video', async (req: Request, res: Response): Promise<void
           instances: [{
             prompt: combinedPrompt,
             image: {
-              inlineData: {
-                mimeType: 'image/png',
-                data: rawBase64
-              }
+              bytesBase64Encoded: rawBase64
             }
           }],
           parameters: {
@@ -565,9 +562,9 @@ app.post('/api/animate-video', async (req: Request, res: Response): Promise<void
               {
                 filter: 'zoompan',
                 options: {
-                  z: 'min(zoom+0.001,1.15)',
-                  x: 'iw/2-(iw/zoom/2)',
-                  y: 'ih/2-(ih/zoom/2)',
+                  z: '1.15',
+                  x: '(iw-iw/zoom)/2 + sin(on/4)*10',
+                  y: '(ih-ih/zoom)/2 + cos(on/5)*10',
                   d: 125, // 5 seconds at 25fps
                   s: '720x1280'
                 }
@@ -771,6 +768,44 @@ app.post('/api/video-status', async (req: Request, res: Response): Promise<void>
   }
 });
 
+// Helper to inspect if a video file contains an audio stream.
+// If it does not, transcode it to add a silent audio track to prevent FFmpeg concat errors.
+function ensureAudioStream(videoPath: string, index: number, sessionId: string, tempDir: string): Promise<string> {
+  return new Promise<string>((resolve) => {
+    const cp = require('child_process');
+    const ffmpegExecutable = require('@ffmpeg-installer/ffmpeg').path;
+    
+    // Run ffmpeg -i to check for Audio streams in the output metadata (printed to stderr)
+    const checkCmd = `"${ffmpegExecutable}" -i "${videoPath}"`;
+    cp.exec(checkCmd, (execErr: any, stdout: string, stderr: string) => {
+      const output = stderr || stdout || '';
+      const hasAudio = output.includes('Audio:');
+      
+      if (hasAudio) {
+        console.log(`[Merge Process] Clip ${index + 1} already has an audio stream.`);
+        resolve(videoPath);
+      } else {
+        console.log(`[Merge Process] Clip ${index + 1} is missing an audio stream. Injecting a silent audio track...`);
+        const silentOutputPath = path.join(tempDir, `silent_injected_${sessionId}_${index}.mp4`);
+        
+        // Command to add a silent audio stream (using lavfi anullsrc) and copy video stream
+        const addSilentAudioCmd = `"${ffmpegExecutable}" -i "${videoPath}" -f lavfi -i anullsrc=channel_layout=stereo:sample_rate=44100 -c:v copy -c:a aac -shortest -y "${silentOutputPath}"`;
+        
+        cp.exec(addSilentAudioCmd, (addErr: any) => {
+          if (addErr) {
+            console.error(`[Merge Process] Failed to inject silent audio to clip ${index + 1}:`, addErr.message);
+            // Fall back to original file as a last resort
+            resolve(videoPath);
+          } else {
+            console.log(`[Merge Process] Silent audio successfully injected to clip ${index + 1}.`);
+            resolve(silentOutputPath);
+          }
+        });
+      }
+    });
+  });
+}
+
 // 5. Merge and trim videos
 app.get('/api/merge-videos', async (req: Request, res: Response): Promise<void> => {
   const urlsQuery = req.query.urls as string;
@@ -791,7 +826,7 @@ app.get('/api/merge-videos', async (req: Request, res: Response): Promise<void> 
 
   const tempDir = os.tmpdir();
   const sessionId = `${Date.now()}_${Math.floor(Math.random() * 10000)}`;
-  const inputPaths: string[] = [];
+  const downloadedPaths: string[] = [];
   const outputFilename = `merged_ad_${sessionId}.mp4`;
   const outputPath = path.join(tempDir, outputFilename);
 
@@ -801,40 +836,56 @@ app.get('/api/merge-videos', async (req: Request, res: Response): Promise<void> 
     // Download all clips
     for (let i = 0; i < urls.length; i++) {
       const clipUrl = urls[i];
-      const localPath = path.join(tempDir, `clip_${sessionId}_${i}.mp4`);
-      console.log(`Downloading clip ${i + 1}: ${clipUrl} -> ${localPath}`);
-      
-      const response = await axios({
-        method: 'get',
-        url: clipUrl,
-        responseType: 'stream'
-      });
-      
-      const writer = fs.createWriteStream(localPath);
-      response.data.pipe(writer);
-      
-      await new Promise<void>((resolve, reject) => {
-        writer.on('finish', () => resolve());
-        writer.on('error', (err) => reject(err));
-      });
-      inputPaths.push(localPath);
+      let localPath = '';
+
+      // Check if URL is local path to public/videos/
+      if (clipUrl.includes('/videos/')) {
+        const filename = clipUrl.split('/videos/').pop() || '';
+        localPath = path.join(tempVideosDir, filename);
+        console.log(`Using local file for clip ${i + 1}: ${localPath}`);
+      } else {
+        localPath = path.join(tempDir, `clip_${sessionId}_${i}.mp4`);
+        console.log(`Downloading clip ${i + 1}: ${clipUrl} -> ${localPath}`);
+        
+        const response = await axios({
+          method: 'get',
+          url: clipUrl,
+          responseType: 'stream'
+        });
+        
+        const writer = fs.createWriteStream(localPath);
+        response.data.pipe(writer);
+        
+        await new Promise<void>((resolve, reject) => {
+          writer.on('finish', () => resolve());
+          writer.on('error', (err) => reject(err));
+        });
+      }
+      downloadedPaths.push(localPath);
+    }
+
+    // Process downloaded/local files to guarantee they all have an audio track
+    const processedPaths: string[] = [];
+    for (let i = 0; i < downloadedPaths.length; i++) {
+      const ensuredPath = await ensureAudioStream(downloadedPaths[i], i, sessionId, tempDir);
+      processedPaths.push(ensuredPath);
     }
 
     // Build FFmpeg command with concatenation (no trimming to preserve full voiceover)
     const command = ffmpeg();
     
-    inputPaths.forEach(p => {
+    processedPaths.forEach(p => {
       command.input(p);
     });
 
     let filterComplex = '';
     let concatInputs = '';
     
-    for (let i = 0; i < inputPaths.length; i++) {
+    for (let i = 0; i < processedPaths.length; i++) {
       concatInputs += `[${i}:v][${i}:a]`;
     }
     
-    filterComplex = `${concatInputs}concat=n=${inputPaths.length}:v=1:a=1[outv][outa]`;
+    filterComplex = `${concatInputs}concat=n=${processedPaths.length}:v=1:a=1[outv][outa]`;
 
     console.log(`Running FFmpeg filter complex: ${filterComplex}`);
 
@@ -852,7 +903,7 @@ app.get('/api/merge-videos', async (req: Request, res: Response): Promise<void> 
       .on('error', (err) => {
         console.error('FFmpeg error:', err.message);
         res.status(500).json({ error: 'FFmpeg merging failed', details: err.message });
-        cleanupFiles(inputPaths, outputPath);
+        cleanupFiles(downloadedPaths, outputPath);
       })
       .on('end', () => {
         console.log('Merging successfully finished!');
@@ -861,7 +912,7 @@ app.get('/api/merge-videos', async (req: Request, res: Response): Promise<void> 
           if (downloadErr) {
             console.error('Error sending file to client:', downloadErr);
           }
-          cleanupFiles(inputPaths, outputPath);
+          cleanupFiles(downloadedPaths, outputPath);
         });
       })
       .run();
@@ -869,7 +920,7 @@ app.get('/api/merge-videos', async (req: Request, res: Response): Promise<void> 
   } catch (err: any) {
     console.error('Error in merge-videos route:', err);
     res.status(500).json({ error: 'Failed to process videos', details: err.message });
-    cleanupFiles(inputPaths, outputPath);
+    cleanupFiles(downloadedPaths, outputPath);
   }
 });
 
