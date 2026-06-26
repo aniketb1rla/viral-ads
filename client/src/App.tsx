@@ -17,7 +17,7 @@ import {
   FileText
 } from 'lucide-react';
 
-const API_BASE = window.location.hostname === 'localhost' ? 'http://localhost:3001' : window.location.origin;
+let API_BASE = localStorage.getItem('api_base_url') || (window.location.hostname === 'localhost' ? 'http://localhost:3001' : window.location.origin);
 
 interface AdGroup {
   id: string;
@@ -115,6 +115,13 @@ export default function App() {
 
   // Polling intervals reference
   const pollingIntervals = useRef<{ [key: number]: any }>({});
+  
+  const [apiBaseUrl, setApiBaseUrlState] = useState<string>(API_BASE);
+  const handleApiBaseChange = (val: string) => {
+    setApiBaseUrlState(val);
+    API_BASE = val;
+    localStorage.setItem('api_base_url', val);
+  };
 
   // Clean up polling on step change or unmount
   useEffect(() => {
@@ -470,6 +477,20 @@ export default function App() {
                   placeholder="Enter Kling Key"
                 />
                 <Film className="form-input-icon" size={16} />
+              </div>
+            </div>
+
+            <div className="form-group">
+              <label className="form-label">API Base URL</label>
+              <div className="input-container">
+                <input
+                  type="text"
+                  className="form-input"
+                  value={apiBaseUrl}
+                  onChange={(e) => handleApiBaseChange(e.target.value)}
+                  placeholder="e.g. https://viral-ai-ad-generator.onrender.com"
+                />
+                <Settings className="form-input-icon" size={16} />
               </div>
             </div>
 
