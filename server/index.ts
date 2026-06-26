@@ -208,7 +208,7 @@ For each scene, output:
 3. Audio: The hook, voiceover (VO), sound effects (SFX), or music. Make the Hook in Scene 1 extremely scroll-stopping (can be a bold statement, visual-audio sync, etc.).
 4. Visual description: Detailed action taking place.
 5. Image Prompt: An extremely descriptive, cinematic text-to-image prompt to be used in Gemini 3 Pro Image (Nano Banana Pro) to generate a high-fidelity 9:16 reference image. Specify the subject, composition, environment, lighting (e.g. volumetric lighting, neon glow), color palette, and camera angle. Focus on visual styling. DO NOT include any text inside the image. To prevent triggering strict AI safety filters, use abstract or safe styling (e.g., "premium cotton apparel flat-lay", "aesthetic comfort activewear", "minimalist textile display on a wooden shelf", "clean product packaging on glass"). Never use flagged words like "panties", "underwear", "bra", "lingerie", "nude", or "sexuality".
-6. Animation Prompt: A descriptive motion instruction for Kling AI to animate the generated reference image. Describe the camera movement (e.g., slow zoom-in, cinematic pan) and the action/movement in the frame (e.g. steam rising, neon lights flickering, water droplets rolling).
+6. Animation Prompt: A descriptive motion and audio instruction for Kling AI to animate the reference image and generate matching audio. Combine visual motion and voiceover/audio instructions. Format it exactly as: '[visual motion description]. Audio voiceover: "[exact voiceover text to be spoken by a voice actor]" with [ambient sound effects / background music description].' The voiceover text MUST match the voiceover/narration written in the "audio" field of this scene so Kling can generate the correct speech/sound.
 
 Return the response in strict JSON format matching the schema below:
 {
@@ -438,7 +438,7 @@ Ensure the product in the generated scene looks exactly like the reference produ
 
 // 4. Submit Image-to-Video Task to Kling AI (api-singapore.klingai.com)
 app.post('/api/animate-video', async (req: Request, res: Response): Promise<void> => {
-  const { imageBase64, prompt, klingKey } = req.body;
+  const { imageBase64, prompt, audio, klingKey } = req.body;
 
   if (!imageBase64) {
     res.status(400).json({ error: 'Image Base64 data is required' });
@@ -454,12 +454,18 @@ app.post('/api/animate-video', async (req: Request, res: Response): Promise<void
   // Remove any base64 prefix (e.g. data:image/png;base64,) as Kling requires raw base64 string
   const rawBase64 = imageBase64.replace(/^data:image\/[a-z]+;base64,/, '');
 
+  // Combine prompt and audio to ensure Kling generates the correct voiceover speech
+  let combinedPrompt = prompt || 'animate smoothly with camera pan';
+  if (audio && !combinedPrompt.toLowerCase().includes('voiceover') && !combinedPrompt.toLowerCase().includes('audio')) {
+    combinedPrompt += `. Audio voiceover: "${audio}".`;
+  }
+
   try {
     const urlEndpoint = 'https://api-singapore.klingai.com/v1/videos/image2video';
     const payload = {
       model_name: 'kling-v3',
       image: rawBase64,
-      prompt: prompt || 'animate smoothly with camera pan',
+      prompt: combinedPrompt,
       aspect_ratio: '9:16',
       duration: 5,
       sound: 'on',
