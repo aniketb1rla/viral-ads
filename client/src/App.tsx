@@ -184,6 +184,45 @@ export default function App() {
     }
   };
 
+  // Helper to make API requests with robust error handling to handle HTML/fallback errors gracefully
+  const requestApi = async (path: string, options: RequestInit) => {
+    try {
+      const response = await fetch(`${API_BASE}${path}`, options);
+      
+      const contentType = response.headers.get('content-type');
+      let data: any = null;
+      if (contentType && contentType.includes('application/json')) {
+        data = await response.json();
+      }
+      
+      if (!response.ok) {
+        if (!contentType || !contentType.includes('application/json')) {
+          throw new Error(
+            `The server returned an HTML/non-JSON response (Status ${response.status}).\n\n` +
+            `This usually means the "API Base URL" is incorrect, the backend is returning a Render routing/error page, or the backend service is not running at that endpoint.\n\n` +
+            `Current API Base URL: "${API_BASE}"\n\n` +
+            `Please click the Settings icon (top-right cog) and update the "API Base URL" to match your active backend service.`
+          );
+        }
+        throw new Error(data?.error || data?.details || `Server error (Status ${response.status})`);
+      }
+      
+      if (data === null) {
+        throw new Error(`Invalid server response (Expected JSON, but received Content-Type: ${contentType})`);
+      }
+      
+      return data;
+    } catch (err: any) {
+      if (err.message && err.message.includes('Failed to fetch')) {
+        throw new Error(
+          `Failed to connect to the backend server at "${API_BASE}".\n\n` +
+          `Please check that the server is running, and verify the "API Base URL" in the settings modal (top-right cog).`
+        );
+      }
+      throw err;
+    }
+  };
+
   // Step 1: Analyze URL
   const handleAnalyzeBrand = async () => {
     if (!url) return;
@@ -191,15 +230,11 @@ export default function App() {
     setLoadingMsg('Crawling & analyzing your brand URL with Gemini Groundsearch...');
     
     try {
-      const response = await fetch(`${API_BASE}/api/analyze-brand`, {
+      const data = await requestApi('/api/analyze-brand', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ url, geminiKey })
       });
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.error || 'Brand analysis failed');
-      }
       setBrandProfile(data);
       // Auto select the first ad group as default
       if (data.adGroups && data.adGroups.length > 0) {
@@ -220,15 +255,11 @@ export default function App() {
     setLoadingMsg('Crafting scrolling-stopping hook & writing professional vertical ad script...');
 
     try {
-      const response = await fetch(`${API_BASE}/api/generate-script`, {
+      const data = await requestApi('/api/generate-script', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ brandProfile, selectedAdGroup, geminiKey })
       });
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.error || 'Script generation failed');
-      }
       setScript(data);
       // Initialize frame and video states for the scenes
       setFrames(data.scenes.map((s: Scene) => ({ sceneNumber: s.sceneNumber, image: null, status: 'idle' })));
@@ -269,7 +300,7 @@ export default function App() {
         }
       }
 
-      const response = await fetch(`${API_BASE}/api/generate-image`, {
+      const data = await requestApi('/api/generate-image', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -279,10 +310,6 @@ export default function App() {
           geminiKey
         })
       });
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.error || 'Image generation failed');
-      }
       setFrames(prev => prev.map(f => f.sceneNumber === sceneNumber ? { ...f, image: data.image, status: 'completed' } : f));
       return data.image;
     } catch (err: any) {
@@ -315,7 +342,7 @@ export default function App() {
     setVideos(prev => prev.map(v => v.sceneNumber === sceneNumber ? { ...v, status: 'submitted', error: undefined } : v));
 
     try {
-      const response = await fetch(`${API_BASE}/api/animate-video`, {
+      const data = await requestApi('/api/animate-video', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -326,10 +353,6 @@ export default function App() {
           klingKey
         })
       });
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.error || 'Video animation submission failed');
-      }
 
       setVideos(prev => prev.map(v => v.sceneNumber === sceneNumber ? { ...v, taskId: data.taskId, status: 'submitted' } : v));
 
@@ -356,17 +379,12 @@ export default function App() {
 
     const interval = setInterval(async () => {
       try {
-        const response = await fetch(`${API_BASE}/api/video-status`, {
+        const data = await requestApi('/api/video-status', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ taskId, klingKey })
         });
-        const data = await response.json();
         
-        if (!response.ok) {
-          throw new Error(data.error || 'Polling failed');
-        }
-
         const taskStatus = data.task_status;
         console.log(`Polling scene ${sceneNumber}: ${taskStatus}`);
 
