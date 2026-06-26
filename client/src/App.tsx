@@ -105,6 +105,11 @@ export default function App() {
   const [playingVideoIndex, setPlayingVideoIndex] = useState<number>(0);
   const [autoPlayAll, setAutoPlayAll] = useState<boolean>(true);
   const videoPlayerRef = useRef<HTMLVideoElement | null>(null);
+  const [hasAutoMerged, setHasAutoMerged] = useState<boolean>(false);
+
+  // Check if all videos are ready for sequential player
+  const activeSucceedVideos = videos.filter(v => v.status === 'succeed' && v.url);
+  const allVideosCompleted = activeSucceedVideos.length === videos.length && videos.length > 0;
 
   // Polling intervals reference
   const pollingIntervals = useRef<{ [key: number]: any }>({});
@@ -116,6 +121,31 @@ export default function App() {
       pollingIntervals.current = {};
     };
   }, [step]);
+
+  // Auto-animate frames on image completion
+  useEffect(() => {
+    if (step !== 4) return;
+    frames.forEach(frame => {
+      if (frame.status === 'completed' && frame.image) {
+        const video = videos.find(v => v.sceneNumber === frame.sceneNumber);
+        if (video && video.status === 'idle') {
+          animateFrame(frame.sceneNumber);
+        }
+      }
+    });
+  }, [frames, videos, step]);
+
+  // Auto-merge videos when all completed
+  useEffect(() => {
+    if (!script) return;
+    if (allVideosCompleted && !hasAutoMerged) {
+      setHasAutoMerged(true);
+      const urls = videos.map(v => v.url).join(',');
+      const durations = script.scenes.map(s => s.duration).join(',');
+      const downloadUrl = `${API_BASE}/api/merge-videos?urls=${encodeURIComponent(urls)}&durations=${encodeURIComponent(durations)}`;
+      window.open(downloadUrl, '_blank');
+    }
+  }, [allVideosCompleted, hasAutoMerged, videos, script]);
 
   // Handle Drag & Drop / File Select for Product Image
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -194,6 +224,7 @@ export default function App() {
       // Initialize frame and video states for the scenes
       setFrames(data.scenes.map((s: Scene) => ({ sceneNumber: s.sceneNumber, image: null, status: 'idle' })));
       setVideos(data.scenes.map((s: Scene) => ({ sceneNumber: s.sceneNumber, taskId: null, status: 'idle', url: null })));
+      setHasAutoMerged(false);
       setStep(3);
     } catch (err: any) {
       alert(`Error: ${err.message}`);
@@ -205,6 +236,10 @@ export default function App() {
   // Step 3 -> Go to Production
   const handleProceedToProduction = () => {
     setStep(4);
+    // Auto-start generating all frame images as soon as approved
+    setTimeout(() => {
+      generateAllFrames();
+    }, 200);
   };
 
   // Phase A: Generate Frame Reference Image via Nano Banana Pro
@@ -359,9 +394,7 @@ export default function App() {
     }
   }, [playingVideoIndex]);
 
-  // Check if all videos are ready for sequential player
-  const activeSucceedVideos = videos.filter(v => v.status === 'succeed' && v.url);
-  const allVideosCompleted = activeSucceedVideos.length === videos.length && videos.length > 0;
+
 
   return (
     <div className="app-container">

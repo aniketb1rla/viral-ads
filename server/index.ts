@@ -586,7 +586,7 @@ app.get('/api/merge-videos', async (req: Request, res: Response): Promise<void> 
       inputPaths.push(localPath);
     }
 
-    // Build FFmpeg command with trimming and concatenation
+    // Build FFmpeg command with concatenation (no trimming to preserve full voiceover)
     const command = ffmpeg();
     
     inputPaths.forEach(p => {
@@ -597,13 +597,10 @@ app.get('/api/merge-videos', async (req: Request, res: Response): Promise<void> 
     let concatInputs = '';
     
     for (let i = 0; i < inputPaths.length; i++) {
-      const d = durations[i];
-      filterComplex += `[${i}:v]trim=duration=${d},setpts=PTS-STARTPTS[v${i}]; `;
-      filterComplex += `[${i}:a]atrim=duration=${d},asetpts=PTS-STARTPTS[a${i}]; `;
-      concatInputs += `[v${i}][a${i}]`;
+      concatInputs += `[${i}:v][${i}:a]`;
     }
     
-    filterComplex += `${concatInputs}concat=n=${inputPaths.length}:v=1:a=1[outv][outa]`;
+    filterComplex = `${concatInputs}concat=n=${inputPaths.length}:v=1:a=1[outv][outa]`;
 
     console.log(`Running FFmpeg filter complex: ${filterComplex}`);
 
