@@ -51,6 +51,7 @@ app.post('/api/analyze-brand', async (req: Request, res: Response): Promise<void
   }
 
   const prompt = `Perform a google search for the URL: "${url}". Analyze the website, Play Store, or App Store link. Summarize the brand, its services or product offerings, target audience, core value proposition, tone of voice, and recommended visual style. Then, create exactly 3 distinct target ad groups or campaign concepts for vertical video ads on Meta.
+Keep all descriptions, strategies, and summaries extremely concise, direct, and under 2 sentences to prevent token limits and truncation.
 Return the response in strict JSON format matching the schema below. Do not wrap the JSON in comments or any text other than valid JSON.
 
 JSON Schema:
@@ -81,7 +82,9 @@ JSON Schema:
       }],
       tools: [{ google_search: {} }],
       generationConfig: {
-        responseMimeType: 'application/json'
+        responseMimeType: 'application/json',
+        maxOutputTokens: 4000,
+        temperature: 0.1
       }
     };
 
@@ -97,7 +100,9 @@ JSON Schema:
           parts: [{ text: `Based on your pre-trained knowledge, analyze the brand URL: "${url}" and generate the brand summary. (If you don't know the URL, infer the brand from the URL name itself). ${prompt}` }]
         }],
         generationConfig: {
-          responseMimeType: 'application/json'
+          responseMimeType: 'application/json',
+          maxOutputTokens: 4000,
+          temperature: 0.1
         }
       };
       
@@ -133,6 +138,7 @@ app.post('/api/generate-script', async (req: Request, res: Response): Promise<vo
 
   const prompt = `You are a professional Meta Ads scriptwriter specializing in high-converting, scroll-stopping vertical videos (9:16, 10 seconds duration).
 Write a vertical video ad script for the following brand and ad group concept.
+Keep all scene audio, visual descriptions, image prompts, and animation prompts descriptive but concise (under 2-3 sentences per field) to prevent token limits and truncation.
 
 Brand Profile:
 - Brand Name: ${brandProfile.brandName}
@@ -176,7 +182,9 @@ Return the response in strict JSON format matching the schema below:
         parts: [{ text: prompt }]
       }],
       generationConfig: {
-        responseMimeType: 'application/json'
+        responseMimeType: 'application/json',
+        maxOutputTokens: 4000,
+        temperature: 0.2
       }
     };
 
