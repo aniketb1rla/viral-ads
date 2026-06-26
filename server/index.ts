@@ -85,7 +85,25 @@ JSON Schema:
         responseMimeType: 'application/json',
         maxOutputTokens: 4000,
         temperature: 0.1
-      }
+      },
+      safetySettings: [
+        {
+          category: 'HARM_CATEGORY_HARASSMENT',
+          threshold: 'BLOCK_ONLY_HIGH'
+        },
+        {
+          category: 'HARM_CATEGORY_HATE_SPEECH',
+          threshold: 'BLOCK_ONLY_HIGH'
+        },
+        {
+          category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT',
+          threshold: 'BLOCK_ONLY_HIGH'
+        },
+        {
+          category: 'HARM_CATEGORY_DANGEROUS_CONTENT',
+          threshold: 'BLOCK_ONLY_HIGH'
+        }
+      ]
     };
 
     console.log(`Analyzing URL: ${url} using Gemini 3.5 Flash...`);
@@ -103,14 +121,37 @@ JSON Schema:
           responseMimeType: 'application/json',
           maxOutputTokens: 4000,
           temperature: 0.1
-        }
+        },
+        safetySettings: [
+          {
+            category: 'HARM_CATEGORY_HARASSMENT',
+            threshold: 'BLOCK_ONLY_HIGH'
+          },
+          {
+            category: 'HARM_CATEGORY_HATE_SPEECH',
+            threshold: 'BLOCK_ONLY_HIGH'
+          },
+          {
+            category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT',
+            threshold: 'BLOCK_ONLY_HIGH'
+          },
+          {
+            category: 'HARM_CATEGORY_DANGEROUS_CONTENT',
+            threshold: 'BLOCK_ONLY_HIGH'
+          }
+        ]
       };
       
       const fallbackUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${key}`;
       response = await axios.post(fallbackUrl, fallbackPayload);
     }
 
-    const text = response.data?.candidates?.[0]?.content?.parts?.[0]?.text;
+    const candidate = response.data?.candidates?.[0];
+    if (candidate?.finishReason && candidate.finishReason !== 'STOP') {
+      throw new Error(`Gemini blocked brand analysis. Reason: ${candidate.finishReason}. Safety Ratings: ${JSON.stringify(candidate.safetyRatings)}`);
+    }
+
+    const text = candidate?.content?.parts?.[0]?.text;
     if (!text) {
       throw new Error('Empty response from Gemini');
     }
@@ -185,12 +226,36 @@ Return the response in strict JSON format matching the schema below:
         responseMimeType: 'application/json',
         maxOutputTokens: 4000,
         temperature: 0.2
-      }
+      },
+      safetySettings: [
+        {
+          category: 'HARM_CATEGORY_HARASSMENT',
+          threshold: 'BLOCK_ONLY_HIGH'
+        },
+        {
+          category: 'HARM_CATEGORY_HATE_SPEECH',
+          threshold: 'BLOCK_ONLY_HIGH'
+        },
+        {
+          category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT',
+          threshold: 'BLOCK_ONLY_HIGH'
+        },
+        {
+          category: 'HARM_CATEGORY_DANGEROUS_CONTENT',
+          threshold: 'BLOCK_ONLY_HIGH'
+        }
+      ]
     };
 
     console.log('Generating Meta ad script...');
     const response = await axios.post(urlEndpoint, payload);
-    const text = response.data?.candidates?.[0]?.content?.parts?.[0]?.text;
+    
+    const candidate = response.data?.candidates?.[0];
+    if (candidate?.finishReason && candidate.finishReason !== 'STOP') {
+      throw new Error(`Gemini blocked script generation. Reason: ${candidate.finishReason}. Safety Ratings: ${JSON.stringify(candidate.safetyRatings)}`);
+    }
+
+    const text = candidate?.content?.parts?.[0]?.text;
     if (!text) {
       throw new Error('Empty response from Gemini');
     }
