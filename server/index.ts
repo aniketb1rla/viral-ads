@@ -185,6 +185,10 @@ app.post('/api/generate-script', async (req: Request, res: Response): Promise<vo
 Write a vertical video ad script for the following brand and ad group concept.
 Keep all scene audio, visual descriptions, image prompts, and animation prompts descriptive but concise (under 2-3 sentences per field) to prevent token limits and truncation.
 
+DEMOGRAPHIC & VOICE ANALYSIS:
+1. Analyze the brand profile and target audience to determine key target demographics (e.g. millennial parents, gen-Z athletes, corporate professionals, college students).
+2. Recommend a highly relevant Voice Profile for the Kling voiceover (gender, age group, vocal characteristics, accent, and tone) that best connects with this target demographic (e.g., "enthusiastic, fast-paced Gen-Z female voice with a modern American accent", "confident, warm 35-year-old male voice with a calm British accent").
+
 CRITICAL SAFETY DIRECTIVE:
 If the brand or product is an undergarment, sleepwear, personal hygiene, or body-related product (e.g., underwear, bras, period panties, pads), do not generate scripts with sexually suggestive, intimate, or anatomically descriptive wording. Focus on lifestyle, flat-lay compositions, abstract fabrics, clean design, or activewear. Avoid words like "panties", "underwear", "bra", "lingerie", "period", "sexy", "intimate", "nude", "naked", or "body shape" in the visual descriptions, image prompts, or animation prompts.
 
@@ -208,11 +212,13 @@ For each scene, output:
 3. Audio: The hook, voiceover (VO), sound effects (SFX), or music. Make the Hook in Scene 1 extremely scroll-stopping (can be a bold statement, visual-audio sync, etc.).
 4. Visual description: Detailed action taking place.
 5. Image Prompt: An extremely descriptive, cinematic text-to-image prompt to be used in Gemini 3 Pro Image (Nano Banana Pro) to generate a high-fidelity 9:16 reference image. Specify the subject, composition, environment, lighting (e.g. volumetric lighting, neon glow), color palette, and camera angle. Focus on visual styling. DO NOT include any text inside the image. To prevent triggering strict AI safety filters, use abstract or safe styling (e.g., "premium cotton apparel flat-lay", "aesthetic comfort activewear", "minimalist textile display on a wooden shelf", "clean product packaging on glass"). Never use flagged words like "panties", "underwear", "bra", "lingerie", "nude", or "sexuality".
-6. Animation Prompt: A descriptive motion and audio instruction for Kling AI to animate the reference image and generate matching audio. Combine visual motion and voiceover/audio instructions. Format it exactly as: '[visual motion description]. Audio voiceover: "[exact voiceover text to be spoken by a voice actor]" with [ambient sound effects / background music description].' The voiceover text MUST match the voiceover/narration written in the "audio" field of this scene so Kling can generate the correct speech/sound.
+6. Animation Prompt: A descriptive motion and audio instruction for Kling AI to animate the reference image and generate matching audio. Combine visual motion and voiceover/audio instructions. Format it exactly as: '[visual motion description]. Audio voiceover: "[exact voiceover text to be spoken by a voice actor]" spoken by [recommended voice profile details, e.g., an enthusiastic Gen-Z female voice] with [ambient sound effects / background music description].' The voiceover text MUST match the voiceover/narration written in the "audio" field of this scene so Kling can generate the correct speech/sound.
 
 Return the response in strict JSON format matching the schema below:
 {
   "title": "Ad Campaign Script Title",
+  "targetDemographics": "Concise target demographics (e.g. Gen-Z women interested in sustainable comfort)",
+  "voiceProfile": "Vocal style configuration (e.g., A confident, energetic young female voice with an American accent)",
   "scenes": [
     {
       "sceneNumber": 1,
@@ -220,7 +226,7 @@ Return the response in strict JSON format matching the schema below:
       "audio": "Audio description (VO/SFX)",
       "visual": "Visual description of action",
       "imagePrompt": "Detailed prompt for Nano Banana Pro image generation (9:16 aspect ratio)",
-      "animationPrompt": "Motion instructions for Kling AI image-to-video animation"
+      "animationPrompt": "Motion instructions for Kling AI image-to-video animation including voiceover and voice profile"
     }
   ]
 }`;
@@ -438,7 +444,7 @@ Ensure the product in the generated scene looks exactly like the reference produ
 
 // 4. Submit Image-to-Video Task to Kling AI (api-singapore.klingai.com)
 app.post('/api/animate-video', async (req: Request, res: Response): Promise<void> => {
-  const { imageBase64, prompt, audio, klingKey } = req.body;
+  const { imageBase64, prompt, audio, voiceProfile, klingKey } = req.body;
 
   if (!imageBase64) {
     res.status(400).json({ error: 'Image Base64 data is required' });
@@ -454,10 +460,11 @@ app.post('/api/animate-video', async (req: Request, res: Response): Promise<void
   // Remove any base64 prefix (e.g. data:image/png;base64,) as Kling requires raw base64 string
   const rawBase64 = imageBase64.replace(/^data:image\/[a-z]+;base64,/, '');
 
-  // Combine prompt and audio to ensure Kling generates the correct voiceover speech
+  // Combine prompt, audio, and voice profile to ensure Kling generates the correct voiceover speech
   let combinedPrompt = prompt || 'animate smoothly with camera pan';
   if (audio && !combinedPrompt.toLowerCase().includes('voiceover') && !combinedPrompt.toLowerCase().includes('audio')) {
-    combinedPrompt += `. Audio voiceover: "${audio}".`;
+    const voiceStyle = voiceProfile ? ` spoken by ${voiceProfile}` : '';
+    combinedPrompt += `. Audio voiceover: "${audio}"${voiceStyle}.`;
   }
 
   try {

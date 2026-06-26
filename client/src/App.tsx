@@ -49,6 +49,8 @@ interface Scene {
 interface Script {
   title: string;
   scenes: Scene[];
+  targetDemographics?: string;
+  voiceProfile?: string;
 }
 
 interface FrameState {
@@ -291,6 +293,7 @@ export default function App() {
           imageBase64: frame.image,
           prompt: scene.animationPrompt,
           audio: scene.audio,
+          voiceProfile: script?.voiceProfile,
           klingKey
         })
       });
@@ -671,6 +674,35 @@ export default function App() {
               Your script has been optimized with a high-impact hook and broken down into 10s vertical frames.
             </p>
 
+            {/* Demographic & Voice Profile Callout */}
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: '1fr 1fr',
+              gap: '16px',
+              marginBottom: '24px',
+              background: 'rgba(255, 255, 255, 0.02)',
+              padding: '16px',
+              borderRadius: '12px',
+              border: '1px solid rgba(255, 255, 255, 0.05)'
+            }}>
+              <div>
+                <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#a78bfa', textTransform: 'uppercase', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  🎯 Target Demographics
+                </span>
+                <p style={{ fontSize: '0.9rem', color: 'var(--text-main)', marginTop: '6px' }}>
+                  {script.targetDemographics || 'Not analyzed'}
+                </p>
+              </div>
+              <div>
+                <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#22d3ee', textTransform: 'uppercase', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  🎙️ Recommended Voice Profile
+                </span>
+                <p style={{ fontSize: '0.9rem', color: 'var(--text-main)', marginTop: '6px' }}>
+                  {script.voiceProfile || 'Not analyzed'}
+                </p>
+              </div>
+            </div>
+
             <div className="storyboard-timeline">
               {script.scenes.map((scene) => (
                 <div key={scene.sceneNumber} className="storyboard-scene">
@@ -750,7 +782,11 @@ export default function App() {
                   <div key={scene.sceneNumber} className="frame-production-card">
                     {/* Header */}
                     <div style={{ padding: '16px', background: 'rgba(255,255,255,0.01)', borderBottom: '1px solid rgba(255,255,255,0.05)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <h4 style={{ fontSize: '1rem' }}>Scene {scene.sceneNumber} Frame ({scene.duration}s)</h4>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                        <h4 style={{ fontSize: '1rem', margin: 0 }}>Scene {scene.sceneNumber} Frame ({scene.duration}s)</h4>
+                        {video?.status === 'succeed' && <span className="status-badge status-badge-completed" style={{ fontSize: '0.75rem', padding: '2px 8px' }}>Completed</span>}
+                        {video?.status === 'failed' && <span className="status-badge status-badge-failed" style={{ fontSize: '0.75rem', padding: '2px 8px' }}>Failed</span>}
+                      </div>
                       <div style={{ display: 'flex', gap: '8px' }}>
                         <button
                           className="settings-btn"
@@ -791,16 +827,15 @@ export default function App() {
                         )}
 
                         {/* Top progress overlay */}
-                        {video?.status && video.status !== 'idle' && (
+                        {video?.status && video.status !== 'idle' && video.status !== 'succeed' && (
                           <div className="frame-overlay-status">
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
                               <span style={{ fontSize: '0.8rem', fontWeight: 'bold' }}>Kling Animation</span>
                               {video.status === 'submitted' && <span className="status-badge status-badge-pending">Submitted</span>}
                               {video.status === 'processing' && <span className="status-badge status-badge-running">Processing</span>}
-                              {video.status === 'succeed' && <span className="status-badge status-badge-completed">Completed</span>}
                               {video.status === 'failed' && <span className="status-badge status-badge-failed">Failed</span>}
                             </div>
-                            {video.status !== 'succeed' && video.status !== 'failed' && (
+                            {video.status !== 'failed' && (
                               <div className="progress-bar-container">
                                 <div className="progress-bar-fill progress-bar-animated" style={{ width: '100%' }}></div>
                               </div>
