@@ -60,7 +60,7 @@ app.post('/api/analyze-brand', async (req: Request, res: Response): Promise<void
     return;
   }
 
-  const prompt = `Perform a google search for the URL: "${url}". Analyze the website, Play Store, or App Store link. Summarize the brand, its services or product offerings, target audience, core value proposition, tone of voice, and recommended visual style. Then, create exactly 3 distinct target ad groups or campaign concepts for vertical video ads on Meta.
+  const prompt = `Perform a google search for the URL: "${url}". Analyze the website, Play Store, or App Store link. Summarize the brand, its services or product offerings, target audience, core value proposition, tone of voice, and recommended visual style. Then, create exactly 3 distinct target ad groups or campaign concepts for vertical video ads on Meta. The concepts must be optimized for UGC (User Generated Content) style storytelling (e.g. creator review, lifestyle POV, unboxing/hands-on, problem-solution vlog).
 Keep all descriptions, strategies, and summaries extremely concise, direct, and under 2 sentences to prevent token limits and truncation.
 Return the response in strict JSON format matching the schema below. Do not wrap the JSON in comments or any text other than valid JSON.
 
@@ -70,13 +70,13 @@ JSON Schema:
   "summary": "Brief summary of what they do",
   "targetAudience": "Description of target audience",
   "coreValueProp": "Core value proposition",
-  "tone": "e.g. Professional, energetic, humorous, emotional",
-  "visualStyle": "Visual style details for video ads (e.g. vibrant colors, clean minimal, dark mode neon)",
+  "tone": "e.g. Casual authentic, energetic creator-vibe, humorous reaction",
+  "visualStyle": "Visual style details for UGC-style video ads (e.g. natural indoor lighting, smartphone camera style, hand-held shots)",
   "adGroups": [
     {
       "id": "ad-group-1",
-      "title": "Ad Group Title (e.g., Feature Highlight, Customer Story)",
-      "strategy": "Marketing angle/strategy description",
+      "title": "Ad Group Title (e.g., Creator Testimonial, POV Vlog)",
+      "strategy": "Marketing angle/strategy description in UGC context",
       "audience": "Specific audience segment targeted",
       "message": "Core message this ad group will deliver"
     }
@@ -187,9 +187,13 @@ app.post('/api/generate-script', async (req: Request, res: Response): Promise<vo
     return;
   }
 
-  const prompt = `You are a professional Meta Ads scriptwriter specializing in high-converting, scroll-stopping vertical videos (9:16, 10 seconds duration).
-Write a vertical video ad script for the following brand and ad group concept.
-Keep all scene audio, visual descriptions, image prompts, and animation prompts descriptive but concise (under 2-3 sentences per field) to prevent token limits and truncation.
+  const prompt = `You are a professional Meta Ads UGC (User Generated Content) scriptwriter and video producer specializing in high-converting, scroll-stopping, authentic vertical videos (9:16, 10 seconds duration).
+Your goal is to write a script and storyboard that feels like a real creator's post on TikTok or Instagram Reels, rather than a polished corporate commercial.
+
+UGC STYLE STORYTELLING PRINCIPLES:
+1. Authentic Hook: Start Scene 1 with an instant, relatable hook. Use selfie style or a creator talking directly to their phone, screen-recording, or casual vlog opening. Examples: "I was today years old when I found this...", "POV: your skincare routine is actually working", "This one product literally saved my sanity...", "I never do reviews, but...".
+2. Creator Dialogue: The voiceover must sound like a real person talking naturally to their friends. Avoid advertising buzzwords, overly polished voiceover styles, or formal statements. Use casual, conversational, and enthusiastic speech.
+3. Natural Visuals: The visual setting should look like real life. A cozy bedroom, a bright living room, a messy kitchen, a casual coffee shop, or holding the phone while walking down the street. It must look like smartphone footage (raw, hand-held, slightly imperfect).
 
 DEMOGRAPHIC & VOICE ANALYSIS:
 1. Analyze the brand profile and target audience to determine key target demographics (e.g. millennial parents, gen-Z athletes, corporate professionals, college students).
@@ -202,8 +206,8 @@ Brand Profile:
 - Brand Name: ${brandProfile.brandName}
 - Summary: ${brandProfile.summary}
 - Value Prop: ${brandProfile.coreValueProp}
-- Tone: ${brandProfile.tone}
-- Visual Style: ${brandProfile.visualStyle}
+- Tone: ${brandProfile.tone} (Make it more casual, authentic, and creator-like)
+- Visual Style: ${brandProfile.visualStyle} (Inject UGC and phone-camera realism)
 
 Ad Group Strategy:
 - Title: ${selectedAdGroup.title}
@@ -215,10 +219,10 @@ The video is 10 seconds long and must be broken down into exactly 3 sequential s
 For each scene, output:
 1. Scene Number (1, 2, 3)
 2. Duration: A number representing the duration of this scene in seconds (e.g. 3.0, 3.5, 3.5), such that the sum of the durations of all 3 scenes is exactly 10.0 seconds.
-3. Audio: The hook, voiceover (VO), sound effects (SFX), or music. Make the Hook in Scene 1 extremely scroll-stopping (can be a bold statement, visual-audio sync, etc.).
-4. Visual description: Detailed action taking place.
-5. Image Prompt: An extremely descriptive, cinematic text-to-image prompt to be used in Gemini 3 Pro Image (Nano Banana Pro) to generate a high-fidelity 9:16 reference image. Specify the subject, composition, environment, lighting (e.g. volumetric lighting, neon glow), color palette, and camera angle. Focus on visual styling. DO NOT include any text inside the image. To prevent triggering strict AI safety filters, use abstract or safe styling (e.g., "premium cotton apparel flat-lay", "aesthetic comfort activewear", "minimalist textile display on a wooden shelf", "clean product packaging on glass"). Never use flagged words like "panties", "underwear", "bra", "lingerie", "nude", or "sexuality".
-6. Animation Prompt: A descriptive motion and audio instruction for Kling AI to animate the reference image and generate matching audio. Combine visual motion and voiceover/audio instructions. Format it exactly as: '[visual motion description]. Audio voiceover: "[exact voiceover text to be spoken by a voice actor]" spoken by [recommended voice profile details, e.g., an enthusiastic Gen-Z female voice] with [ambient sound effects / background music description].' The voiceover text MUST match the voiceover/narration written in the "audio" field of this scene so Kling can generate the correct speech/sound.
+3. Audio: The creator voiceover (VO) dialogue and sound effects. Keep it conversational, casual, and authentic.
+4. Visual description: Detailed description of the scene action. Specify the creator's look, expression, and natural movements.
+5. Image Prompt: An extremely descriptive, photo-realistic text-to-image prompt to be used in Gemini 3 Pro Image (Nano Banana Pro) to generate a high-fidelity 9:16 reference image. Specify the subject (e.g., "A young creator holding their phone"), environment (e.g., "candid indoor lighting, cozy apartment bedroom"), composition, lighting (e.g., "natural morning light coming through the window"), camera angle (e.g., "smartphone selfie-style photo", "candid hand-held phone camera shot"), and color palette. To make it look like UGC, explicitly add terms like: "UGC style, shot on phone camera, raw smartphone video frame, amateur photography, natural indoor lighting, real-life environment, candid facial expression". DO NOT include any text inside the image. To prevent triggering strict AI safety filters, use abstract or safe styling where appropriate (e.g. activewear, lifestyle shot). Never use flagged words like "panties", "underwear", "bra", "lingerie", "nude", or "sexuality".
+6. Animation Prompt: A descriptive motion and audio instruction for Kling AI to animate the reference image. Instruct Kling to simulate hand-held camera movements (e.g. "subtle phone camera shake, natural blinking, slight head nod, hands tilting the product toward the lens, casual creator speaking movements"). Format it exactly as: '[visual motion description]. Audio voiceover: "[exact voiceover text to be spoken by a voice actor]" spoken by [recommended voice profile details, e.g., an enthusiastic Gen-Z female voice] with [ambient sound effects / background music description].' The voiceover text MUST match the voiceover/narration written in the "audio" field of this scene so Kling can generate the correct speech/sound.
 
 Return the response in strict JSON format matching the schema below:
 {
