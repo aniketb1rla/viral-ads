@@ -847,19 +847,41 @@ export default function App() {
               Ad Production Studio
             </h1>
             <p className="sub-title" style={{ marginBottom: '24px' }}>
-              Generate frame reference images via Nano Banana Pro and animate them using Kling AI v3-Turbo (720p, 9:16, 10s).
+              Generate frame reference images via Nano Banana Pro and animate them using Kling AI v3-Turbo or Gemini Veo 3.1 (720p, 9:16, 10s).
             </p>
 
-            <div style={{ display: 'flex', gap: '16px', marginBottom: '32px' }}>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '16px', alignItems: 'center', marginBottom: '32px' }}>
               <button className="btn btn-glow-cyan" onClick={generateAllFrames}>
                 <ImageIcon size={18} /> Generate All Reference Frames
               </button>
+              
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', background: 'rgba(255, 255, 255, 0.03)', border: '1px solid var(--border)', borderRadius: '8px', padding: '6px 12px' }}>
+                <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>Video Engine:</span>
+                <select
+                  style={{
+                    background: 'transparent',
+                    color: 'var(--text)',
+                    border: 'none',
+                    fontSize: '0.9rem',
+                    fontWeight: 600,
+                    outline: 'none',
+                    cursor: 'pointer',
+                    paddingRight: '12px'
+                  }}
+                  value={videoModel}
+                  onChange={(e) => setVideoModel(e.target.value as 'kling' | 'gemini')}
+                >
+                  <option value="kling" style={{ background: '#1c192d', color: '#fff' }}>Kling AI v3-Turbo</option>
+                  <option value="gemini" style={{ background: '#1c192d', color: '#fff' }}>Gemini Veo 3.1</option>
+                </select>
+              </div>
+
               <button
                 className="btn btn-primary"
                 onClick={animateAllFrames}
                 disabled={frames.some(f => f.status !== 'completed')}
               >
-                <Video size={18} /> Animate All with Kling AI
+                <Video size={18} /> Animate All with {videoModel === 'kling' ? 'Kling AI' : 'Gemini Veo'}
               </button>
             </div>
 
@@ -920,7 +942,7 @@ export default function App() {
                         {video?.status && video.status !== 'idle' && video.status !== 'succeed' && (
                           <div className="frame-overlay-status">
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
-                              <span style={{ fontSize: '0.8rem', fontWeight: 'bold' }}>Kling Animation</span>
+                              <span style={{ fontSize: '0.8rem', fontWeight: 'bold' }}>{videoModel === 'kling' ? 'Kling' : 'Gemini'} Animation</span>
                               {video.status === 'submitted' && <span className="status-badge status-badge-pending">Submitted</span>}
                               {video.status === 'processing' && <span className="status-badge status-badge-running">Processing</span>}
                               {video.status === 'failed' && <span className="status-badge status-badge-failed">Failed</span>}
@@ -943,7 +965,7 @@ export default function App() {
                         disabled={!frame?.image || video?.status === 'submitted' || video?.status === 'processing'}
                         onClick={() => animateFrame(scene.sceneNumber)}
                       >
-                        <Video size={14} /> Animate Scene with Kling
+                        <Video size={14} /> Animate Scene with {videoModel === 'kling' ? 'Kling' : 'Gemini'}
                       </button>
                       {video?.url && (
                         <a
