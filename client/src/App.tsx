@@ -82,6 +82,7 @@ export default function App() {
   // API Keys (Prefilled, but customizable)
   const [geminiKey, setGeminiKey] = useState<string>('');
   const [klingKey, setKlingKey] = useState<string>('');
+  const [videoModel, setVideoModel] = useState<'kling' | 'gemini'>('kling');
   const [showSettings, setShowSettings] = useState<boolean>(false);
 
   // Brand Analysis & Strategy
@@ -350,7 +351,9 @@ export default function App() {
           prompt: scene.animationPrompt,
           audio: scene.audio,
           voiceProfile: script?.voiceProfile,
-          klingKey
+          klingKey,
+          geminiKey,
+          videoModel
         })
       });
 
@@ -382,7 +385,7 @@ export default function App() {
         const data = await requestApi('/api/video-status', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ taskId, klingKey })
+          body: JSON.stringify({ taskId, klingKey, geminiKey })
         });
         
         const taskStatus = data.task_status;
@@ -509,6 +512,32 @@ export default function App() {
                   placeholder="e.g. https://viral-ai-ad-generator.onrender.com"
                 />
                 <Settings className="form-input-icon" size={16} />
+              </div>
+            </div>
+
+            <div className="form-group">
+              <label className="form-label">Video Generation Model</label>
+              <div className="input-container">
+                <select
+                  className="form-input"
+                  style={{
+                    background: 'rgba(255, 255, 255, 0.05)',
+                    color: 'var(--text)',
+                    border: '1px solid var(--border)',
+                    width: '100%',
+                    height: '42px',
+                    borderRadius: '8px',
+                    padding: '0 12px',
+                    appearance: 'none',
+                    WebkitAppearance: 'none'
+                  }}
+                  value={videoModel}
+                  onChange={(e) => setVideoModel(e.target.value as 'kling' | 'gemini')}
+                >
+                  <option value="kling" style={{ background: '#1c192d', color: '#fff' }}>Kling AI Singapore (v3-Turbo)</option>
+                  <option value="gemini" style={{ background: '#1c192d', color: '#fff' }}>Gemini Veo 3.1 (Google)</option>
+                </select>
+                <Film className="form-input-icon" size={16} />
               </div>
             </div>
 

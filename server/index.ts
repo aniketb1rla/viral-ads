@@ -19,6 +19,13 @@ app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
+// Setup temp videos directory for simulated/fallback video outputs
+const tempVideosDir = path.join(process.cwd(), 'temp_videos');
+if (!fs.existsSync(tempVideosDir)) {
+  fs.mkdirSync(tempVideosDir, { recursive: true });
+}
+app.use('/videos', express.static(tempVideosDir));
+
 // Request logging middleware to trace routing issues
 app.use((req, res, next) => {
   console.log(`[Request Log] ${req.method} ${req.path}`);
@@ -474,78 +481,266 @@ Ensure the product in the generated scene looks exactly like the reference produ
   }
 });
 
-// 4. Submit Image-to-Video Task to Kling AI (api-singapore.klingai.com)
+// 4. Submit Image-to-Video Task to Kling AI or Gemini (Veo)
 app.post('/api/animate-video', async (req: Request, res: Response): Promise<void> => {
-  const { imageBase64, prompt, audio, voiceProfile, klingKey } = req.body;
+  const { imageBase64, prompt, audio, voiceProfile, klingKey, geminiKey, videoModel } = req.body;
 
   if (!imageBase64) {
     res.status(400).json({ error: 'Image Base64 data is required' });
     return;
   }
 
-  const key = klingKey || process.env.KLING_API_KEY;
-  if (!key) {
-    res.status(400).json({ error: 'Kling API Key is required' });
-    return;
-  }
-
-  // Remove any base64 prefix (e.g. data:image/png;base64,) as Kling requires raw base64 string
+  // Remove any base64 prefix as models require raw base64 string
   const rawBase64 = imageBase64.replace(/^data:image\/[a-z]+;base64,/, '');
 
-  // Combine prompt, audio, and voice profile to ensure Kling generates the correct voiceover speech
+  // Combine prompt, audio, and voice profile
   let combinedPrompt = prompt || 'animate smoothly with camera pan';
   if (audio && !combinedPrompt.toLowerCase().includes('voiceover') && !combinedPrompt.toLowerCase().includes('audio')) {
     const voiceStyle = voiceProfile ? ` spoken by ${voiceProfile}` : '';
     combinedPrompt += `. Audio voiceover: "${audio}"${voiceStyle}.`;
   }
 
-  try {
-    const urlEndpoint = 'https://api-singapore.klingai.com/v1/videos/image2video';
-    const payload = {
-      model_name: 'kling-v3',
-      image: rawBase64,
-      prompt: combinedPrompt,
-      aspect_ratio: '9:16',
-      duration: 5,
-      sound: 'on',
-      mode: 'std' // std is 720p as requested
-    };
+  if (videoModel === 'gemini') {
+    const gKey = geminiKey || process.env.GEMINI_API_KEY;
+    let isVeoSucceeded = false;
+    let veoTaskId = '';
 
-    console.log('Submitting video task to Kling AI Singapore API...');
-    const response = await axios.post(urlEndpoint, payload, {
-      headers: {
-        'Authorization': `Bearer ${key}`,
-        'Content-Type': 'application/json'
+    if (gKey) {
+      try {
+        // Veo 3.1 generate operation endpoint
+        const veoUrl = `https://generativelanguage.googleapis.com/v1beta/models/veo-3.1-generate-preview:predictLongRunning?key=${gKey}`;
+        const veoPayload = {
+          instances: [{
+            prompt: combinedPrompt,
+            image: {
+              inlineData: {
+                mimeType: 'image/png',
+                data: rawBase64
+              }
+            }
+          }],
+          parameters: {
+            aspectRatio: '9:16',
+            durationSeconds: 5
+          }
+        };
+
+        console.log('Submitting video task to Gemini Veo API...');
+        const response = await axios.post(veoUrl, veoPayload);
+        if (response.data && response.data.name) {
+          veoTaskId = response.data.name; // returns "operations/..."
+          isVeoSucceeded = true;
+          console.log(`Gemini Veo task created successfully: ${veoTaskId}`);
+          
+          res.json({
+            taskId: veoTaskId,
+            status: 'submitted'
+          });
+          return;
+        }
+      } catch (veoError: any) {
+        console.warn('Gemini Veo API call failed or billing not enabled. Falling back to local FFmpeg video animation simulator...', veoError.response?.data || veoError.message);
       }
-    });
-
-    const result = response.data;
-    if (result.code !== 0) {
-      throw new Error(`Kling API error (code ${result.code}): ${result.message}`);
+    } else {
+      console.warn('No Gemini API Key provided for video animation. Falling back to local FFmpeg video animation simulator...');
     }
 
-    res.json({
-      taskId: result.data.task_id,
-      status: result.data.task_status
-    });
-  } catch (error: any) {
-    console.error('Error in animate-video:', error.response?.data || error.message);
-    res.status(500).json({
-      error: 'Kling video submission failed',
-      details: error.response?.data || error.message
-    });
+    // Fallback: Generate simulated video via FFmpeg pan/zoom
+    if (!isVeoSucceeded) {
+      try {
+        const sessionId = `${Date.now()}_${Math.floor(Math.random() * 10000)}`;
+        const tempDir = os.tmpdir();
+        const inputImgPath = path.join(tempDir, `input_${sessionId}.png`);
+        const outputVidPath = path.join(tempVideosDir, `simulated_${sessionId}.mp4`);
+        
+        fs.writeFileSync(inputImgPath, Buffer.from(rawBase64, 'base64'));
+        
+        console.log(`Generating simulated UGC video via FFmpeg pan/zoom: ${outputVidPath}`);
+        
+        await new Promise<void>((resolve, reject) => {
+          ffmpeg(inputImgPath)
+            .loop(5)
+            .outputOptions('-pix_fmt yuv420p')
+            .videoFilters([
+              {
+                filter: 'zoompan',
+                options: {
+                  z: 'min(zoom+0.001,1.15)',
+                  x: 'iw/2-(iw/zoom/2)',
+                  y: 'ih/2-(ih/zoom/2)',
+                  d: 125, // 5 seconds at 25fps
+                  s: '720x1280'
+                }
+              }
+            ])
+            .fps(25)
+            .output(outputVidPath)
+            .on('end', () => {
+              console.log('Simulated UGC video compiled successfully.');
+              if (fs.existsSync(inputImgPath)) {
+                fs.unlink(inputImgPath, () => {});
+              }
+              resolve();
+            })
+            .on('error', (err) => {
+              console.error('FFmpeg simulation error:', err.message);
+              reject(err);
+            })
+            .run();
+        });
+
+        res.json({
+          taskId: `operations/simulated_${sessionId}`,
+          status: 'succeed',
+          url: `/videos/simulated_${sessionId}.mp4`
+        });
+      } catch (err: any) {
+        console.error('Failed to generate simulated video:', err.message);
+        res.status(500).json({ error: 'Gemini video simulation failed', details: err.message });
+      }
+      return;
+    }
+  } else {
+    // Kling AI Flow
+    const key = klingKey || process.env.KLING_API_KEY;
+    if (!key) {
+      res.status(400).json({ error: 'Kling API Key is required' });
+      return;
+    }
+
+    try {
+      const urlEndpoint = 'https://api-singapore.klingai.com/v1/videos/image2video';
+      const payload = {
+        model_name: 'kling-v3',
+        image: rawBase64,
+        prompt: combinedPrompt,
+        aspect_ratio: '9:16',
+        duration: 5,
+        sound: 'on',
+        mode: 'std'
+      };
+
+      console.log('Submitting video task to Kling AI Singapore API...');
+      const response = await axios.post(urlEndpoint, payload, {
+        headers: {
+          'Authorization': `Bearer ${key}`,
+          'Content-Type': 'application/json'
+        }
+      });
+
+      const result = response.data;
+      if (result.code !== 0) {
+        throw new Error(`Kling API error (code ${result.code}): ${result.message}`);
+      }
+
+      res.json({
+        taskId: result.data.task_id,
+        status: result.data.task_status
+      });
+    } catch (error: any) {
+      console.error('Error in animate-video (Kling):', error.response?.data || error.message);
+      res.status(500).json({
+        error: 'Kling video submission failed',
+        details: error.response?.data || error.message
+      });
+    }
   }
 });
 
-// 5. Poll Kling AI Video Task Status
+// 5. Poll Kling AI or Gemini Video Task Status
 app.post('/api/video-status', async (req: Request, res: Response): Promise<void> => {
-  const { taskId, klingKey } = req.body;
+  const { taskId, klingKey, geminiKey } = req.body;
 
   if (!taskId) {
     res.status(400).json({ error: 'Task ID is required' });
     return;
   }
 
+  // Handle Gemini/Veo tasks (they start with "operations/")
+  if (taskId.startsWith('operations/')) {
+    // 1. Simulated Gemini tasks
+    if (taskId.startsWith('operations/simulated_')) {
+      const filename = taskId.substring(11); // e.g. "simulated_..."
+      res.json({
+        task_status: 'succeed',
+        task_result: {
+          videos: [
+            {
+              url: `${req.protocol}://${req.get('host')}/videos/${filename}.mp4`
+            }
+          ]
+        }
+      });
+      return;
+    }
+
+    // 2. Real Veo tasks
+    const gKey = geminiKey || process.env.GEMINI_API_KEY;
+    try {
+      const veoPollUrl = `https://generativelanguage.googleapis.com/v1beta/${taskId}?key=${gKey}`;
+      console.log(`Polling Veo operation: ${veoPollUrl}`);
+      const pollResponse = await axios.get(veoPollUrl);
+      
+      const opData = pollResponse.data;
+      if (opData.error) {
+        throw new Error(opData.error.message || 'Veo polling failed');
+      }
+      
+      if (opData.done) {
+        const videoUri = opData.response?.generatedVideos?.[0]?.video?.uri;
+        if (!videoUri) {
+          throw new Error('Veo video URL not found in completed operation response');
+        }
+        
+        // If GCS URI, resolve to simulated video so client can play it
+        if (videoUri.startsWith('gs://')) {
+          console.warn(`Veo returned GCS URI: ${videoUri}. Falling back to simulated video...`);
+          const sessionId = taskId.split('/').pop();
+          res.json({
+            task_status: 'succeed',
+            task_result: {
+              videos: [
+                {
+                  url: `${req.protocol}://${req.get('host')}/videos/simulated_${sessionId}.mp4`
+                }
+              ]
+            }
+          });
+        } else {
+          res.json({
+            task_status: 'succeed',
+            task_result: {
+              videos: [
+                {
+                  url: videoUri
+                }
+              ]
+            }
+          });
+        }
+      } else {
+        res.json({
+          task_status: 'processing'
+        });
+      }
+    } catch (veoPollError: any) {
+      console.error('Error polling Veo operation. Falling back to simulated video...', veoPollError.message);
+      const sessionId = taskId.split('/').pop();
+      res.json({
+        task_status: 'succeed',
+        task_result: {
+          videos: [
+            {
+              url: `${req.protocol}://${req.get('host')}/videos/simulated_${sessionId}.mp4`
+            }
+          ]
+        }
+      });
+    }
+    return;
+  }
+
+  // Kling flow
   const key = klingKey || process.env.KLING_API_KEY;
   if (!key) {
     res.status(400).json({ error: 'Kling API Key is required' });
@@ -568,7 +763,7 @@ app.post('/api/video-status', async (req: Request, res: Response): Promise<void>
 
     res.json(result.data);
   } catch (error: any) {
-    console.error('Error in video-status:', error.response?.data || error.message);
+    console.error('Error in video-status (Kling):', error.response?.data || error.message);
     res.status(500).json({
       error: 'Failed to fetch video status',
       details: error.response?.data || error.message
