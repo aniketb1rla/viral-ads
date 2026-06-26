@@ -229,11 +229,14 @@ app.post('/api/generate-image', async (req: Request, res: Response): Promise<voi
     
     // If a reference product image is provided, include it in the input parts
     if (productBase64) {
-      // Clean prefix if any
+      // Clean prefix if any and extract exact mimeType
       const rawBase64 = productBase64.replace(/^data:image\/[a-z]+;base64,/, '');
+      const mimeMatch = productBase64.match(/^data:(image\/[a-z]+);base64,/);
+      const mimeType = mimeMatch ? mimeMatch[1] : 'image/jpeg';
+      
       parts.push({
         inlineData: {
-          mimeType: 'image/jpeg',
+          mimeType: mimeType,
           data: rawBase64
         }
       });

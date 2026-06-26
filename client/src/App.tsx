@@ -108,12 +108,13 @@ export default function App() {
   // Polling intervals reference
   const pollingIntervals = useRef<{ [key: number]: any }>({});
 
-  // Clean up polling on unmount
+  // Clean up polling on step change or unmount
   useEffect(() => {
     return () => {
       Object.values(pollingIntervals.current).forEach(clearInterval);
+      pollingIntervals.current = {};
     };
-  }, []);
+  }, [step]);
 
   // Handle Drag & Drop / File Select for Product Image
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
