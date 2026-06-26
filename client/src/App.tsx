@@ -245,19 +245,30 @@ export default function App() {
   };
 
   // Phase A: Generate Frame Reference Image via Nano Banana Pro
-  const generateFrameImage = async (sceneNumber: number) => {
+  const generateFrameImage = async (sceneNumber: number, currentFramesList?: FrameState[]): Promise<string | null> => {
     const scene = script?.scenes.find(s => s.sceneNumber === sceneNumber);
-    if (!scene) return;
+    if (!scene) return null;
 
     setFrames(prev => prev.map(f => f.sceneNumber === sceneNumber ? { ...f, status: 'generating', error: undefined } : f));
 
     try {
+      // Find Scene 1's image to serve as a character/subject consistency anchor for Scenes 2 and 3
+      let anchorImage: string | null = null;
+      if (sceneNumber > 1) {
+        const listToSearch = currentFramesList || frames;
+        const scene1Frame = listToSearch.find(f => f.sceneNumber === 1);
+        if (scene1Frame && scene1Frame.image && (scene1Frame.status === 'completed' || scene1Frame.image)) {
+          anchorImage = scene1Frame.image;
+        }
+      }
+
       const response = await fetch(`${API_BASE}/api/generate-image`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           prompt: scene.imagePrompt,
           productBase64: productType === 'physical' ? productImage : null,
+          anchorImage,
           geminiKey
         })
       });
@@ -266,15 +277,26 @@ export default function App() {
         throw new Error(data.error || 'Image generation failed');
       }
       setFrames(prev => prev.map(f => f.sceneNumber === sceneNumber ? { ...f, image: data.image, status: 'completed' } : f));
+      return data.image;
     } catch (err: any) {
       setFrames(prev => prev.map(f => f.sceneNumber === sceneNumber ? { ...f, status: 'failed', error: err.message } : f));
+      return null;
     }
   };
 
   const generateAllFrames = async () => {
-    for (const frame of frames) {
-      await generateFrameImage(frame.sceneNumber);
-    }
+    // Generate sequentially to allow Scene 1 to complete and anchor Scenes 2 and 3
+    const scene1Image = await generateFrameImage(1);
+    
+    // Create a temporary updated list so Scene 2 and 3 have immediate access to Scene 1's completed image
+    const updatedList: FrameState[] = [
+      { sceneNumber: 1, image: scene1Image, status: scene1Image ? 'completed' : 'failed' },
+      { sceneNumber: 2, image: null, status: 'idle' },
+      { sceneNumber: 3, image: null, status: 'idle' }
+    ];
+
+    await generateFrameImage(2, updatedList);
+    await generateFrameImage(3, updatedList);
   };
 
   // Phase B: Animate Frame using Kling AI (Singapore v3 API)

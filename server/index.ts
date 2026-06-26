@@ -288,7 +288,7 @@ Return the response in strict JSON format matching the schema below:
 
 // 3. Generate Reference Image via Nano Banana Pro (Gemini 3 Pro Image)
 app.post('/api/generate-image', async (req: Request, res: Response): Promise<void> => {
-  const { prompt, productBase64, geminiKey } = req.body;
+  const { prompt, productBase64, anchorImage, geminiKey } = req.body;
 
   if (!prompt) {
     res.status(400).json({ error: 'Prompt is required' });
@@ -307,6 +307,25 @@ app.post('/api/generate-image', async (req: Request, res: Response): Promise<voi
 
     const parts: any[] = [];
     
+    // Support subject/character consistency referencing using anchorImage
+    if (anchorImage) {
+      const rawAnchor = anchorImage.replace(/^data:image\/[a-z]+;base64,/, '');
+      const mimeMatch = anchorImage.match(/^data:(image\/[a-z]+);base64,/);
+      const mimeType = mimeMatch ? mimeMatch[1] : 'image/png';
+      
+      parts.push({
+        inlineData: {
+          mimeType: mimeType,
+          data: rawAnchor
+        }
+      });
+      parts.push({
+        text: `You are generating a sequel scene. First, look at the attached reference image of the previous scene. Analyze the character, their face geometry, hairstyle, clothing, colors, setting, and background style.
+Then, generate a high-quality vertical 9:16 advertising image of the scene scenario described below: ${prompt}.
+Ensure the character, subject identity, colors, and visual style remain completely consistent with the attached reference image. Keep the same actor/character identity.`
+      });
+    }
+
     // If a reference product image is provided, include it in the input parts
     if (productBase64) {
       // Clean prefix if any and extract exact mimeType
@@ -325,7 +344,10 @@ app.post('/api/generate-image', async (req: Request, res: Response): Promise<voi
 Then, generate a high-quality vertical 9:16 image of the product in this scenario: ${prompt}.
 Ensure the product in the generated scene looks exactly like the reference product in its shape, details, and branding. Maintain accurate physical features.`
       });
-    } else {
+    }
+    
+    // Fallback: If neither product nor anchor image is provided, generate from prompt text directly
+    if (!productBase64 && !anchorImage) {
       parts.push({
         text: `Generate a high-quality vertical 9:16 advertising image of: ${prompt}. Cinematic lighting, 8k resolution, photorealistic, professional product photography.`
       });
