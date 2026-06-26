@@ -39,6 +39,7 @@ interface BrandProfile {
 
 interface Scene {
   sceneNumber: number;
+  duration: number;
   audio: string;
   visual: string;
   imagePrompt: string;
@@ -715,7 +716,7 @@ export default function App() {
                   <div key={scene.sceneNumber} className="frame-production-card">
                     {/* Header */}
                     <div style={{ padding: '16px', background: 'rgba(255,255,255,0.01)', borderBottom: '1px solid rgba(255,255,255,0.05)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <h4 style={{ fontSize: '1rem' }}>Scene {scene.sceneNumber} Frame</h4>
+                      <h4 style={{ fontSize: '1rem' }}>Scene {scene.sceneNumber} Frame ({scene.duration}s)</h4>
                       <div style={{ display: 'flex', gap: '8px' }}>
                         <button
                           className="settings-btn"
@@ -854,7 +855,9 @@ export default function App() {
                       </div>
                       <div className="sequence-info">
                         <div className="sequence-title">Scene {video.sceneNumber} Video</div>
-                        <div className="sequence-duration">Duration: 10s • 720p</div>
+                        <div className="sequence-duration">
+                          Duration: {script.scenes.find(s => s.sceneNumber === video.sceneNumber)?.duration || 3.3}s • 720p
+                        </div>
                       </div>
                       {playingVideoIndex === idx && <Play size={16} style={{ color: 'var(--accent-primary)' }} />}
                     </div>
@@ -862,8 +865,21 @@ export default function App() {
 
                   <div style={{ borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '16px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
                     <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
-                      <strong>Campaign Summary:</strong> Play the scenes back-to-back for a continuous 30-second Meta vertical ad preview.
+                      <strong>Campaign Summary:</strong> Play the scenes back-to-back for a continuous 10-second Meta vertical ad preview.
                     </span>
+                    {allVideosCompleted && (
+                      <button
+                        className="btn btn-primary"
+                        onClick={() => {
+                          const urls = videos.map(v => v.url).join(',');
+                          const durations = script.scenes.map(s => s.duration).join(',');
+                          const downloadUrl = `${API_BASE}/api/merge-videos?urls=${encodeURIComponent(urls)}&durations=${encodeURIComponent(durations)}`;
+                          window.open(downloadUrl, '_blank');
+                        }}
+                      >
+                        <Download size={16} /> Download Full 10s Ad (Merged with Sound)
+                      </button>
+                    )}
                   </div>
                 </div>
               </div>

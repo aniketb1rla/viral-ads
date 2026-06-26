@@ -4,6 +4,10 @@ import axios from 'axios';
 import * as dotenv from 'dotenv';
 import path from 'path';
 import fs from 'fs';
+import os from 'os';
+import ffmpeg from 'fluent-ffmpeg';
+import { path as ffmpegPath } from '@ffmpeg-installer/ffmpeg';
+ffmpeg.setFfmpegPath(ffmpegPath);
 
 dotenv.config();
 
@@ -194,13 +198,14 @@ Ad Group Strategy:
 - Audience Segment: ${selectedAdGroup.audience}
 - Core Message: ${selectedAdGroup.message}
 
-The video is 10 seconds long and must be broken down into exactly 3 sequential scenes (representing approx 3.3 seconds each).
+The video is 10 seconds long and must be broken down into exactly 3 sequential scenes.
 For each scene, output:
 1. Scene Number (1, 2, 3)
-2. Audio: The hook, voiceover (VO), sound effects (SFX), or music. Make the Hook in Scene 1 extremely scroll-stopping (can be a bold statement, visual-audio sync, etc.).
-3. Visual description: Detailed action taking place.
-4. Image Prompt: An extremely descriptive, cinematic text-to-image prompt to be used in Gemini 3 Pro Image (Nano Banana Pro) to generate a high-fidelity 9:16 reference image. Specify the subject, composition, environment, lighting (e.g. volumetric lighting, neon glow), color palette, and camera angle. Focus on visual styling. DO NOT include any text inside the image.
-5. Animation Prompt: A descriptive motion instruction for Kling AI to animate the generated reference image. Describe the camera movement (e.g., slow zoom-in, cinematic pan) and the action/movement in the frame (e.g. steam rising, neon lights flickering, water droplets rolling).
+2. Duration: A number representing the duration of this scene in seconds (e.g. 3.0, 3.5, 3.5), such that the sum of the durations of all 3 scenes is exactly 10.0 seconds.
+3. Audio: The hook, voiceover (VO), sound effects (SFX), or music. Make the Hook in Scene 1 extremely scroll-stopping (can be a bold statement, visual-audio sync, etc.).
+4. Visual description: Detailed action taking place.
+5. Image Prompt: An extremely descriptive, cinematic text-to-image prompt to be used in Gemini 3 Pro Image (Nano Banana Pro) to generate a high-fidelity 9:16 reference image. Specify the subject, composition, environment, lighting (e.g. volumetric lighting, neon glow), color palette, and camera angle. Focus on visual styling. DO NOT include any text inside the image.
+6. Animation Prompt: A descriptive motion instruction for Kling AI to animate the generated reference image. Describe the camera movement (e.g., slow zoom-in, cinematic pan) and the action/movement in the frame (e.g. steam rising, neon lights flickering, water droplets rolling).
 
 Return the response in strict JSON format matching the schema below:
 {
@@ -208,6 +213,7 @@ Return the response in strict JSON format matching the schema below:
   "scenes": [
     {
       "sceneNumber": 1,
+      "duration": 3.3,
       "audio": "Audio description (VO/SFX)",
       "visual": "Visual description of action",
       "imagePrompt": "Detailed prompt for Nano Banana Pro image generation (9:16 aspect ratio)",
@@ -398,7 +404,8 @@ app.post('/api/animate-video', async (req: Request, res: Response): Promise<void
       image: rawBase64,
       prompt: prompt || 'animate smoothly with camera pan',
       aspect_ratio: '9:16',
-      duration: 10,
+      duration: 5,
+      sound: 'on',
       mode: 'std' // std is 720p as requested
     };
 
@@ -466,6 +473,123 @@ app.post('/api/video-status', async (req: Request, res: Response): Promise<void>
     });
   }
 });
+
+// 5. Merge and trim videos
+app.get('/api/merge-videos', async (req: Request, res: Response): Promise<void> => {
+  const urlsQuery = req.query.urls as string;
+  const durationsQuery = req.query.durations as string;
+
+  if (!urlsQuery || !durationsQuery) {
+    res.status(400).json({ error: 'urls and durations query parameters are required' });
+    return;
+  }
+
+  const urls = urlsQuery.split(',');
+  const durations = durationsQuery.split(',').map(Number);
+
+  if (urls.length !== durations.length || urls.length === 0) {
+    res.status(400).json({ error: 'urls and durations count must match' });
+    return;
+  }
+
+  const tempDir = os.tmpdir();
+  const sessionId = `${Date.now()}_${Math.floor(Math.random() * 10000)}`;
+  const inputPaths: string[] = [];
+  const outputFilename = `merged_ad_${sessionId}.mp4`;
+  const outputPath = path.join(tempDir, outputFilename);
+
+  try {
+    console.log(`Starting merge process for session ${sessionId}...`);
+    
+    // Download all clips
+    for (let i = 0; i < urls.length; i++) {
+      const clipUrl = urls[i];
+      const localPath = path.join(tempDir, `clip_${sessionId}_${i}.mp4`);
+      console.log(`Downloading clip ${i + 1}: ${clipUrl} -> ${localPath}`);
+      
+      const response = await axios({
+        method: 'get',
+        url: clipUrl,
+        responseType: 'stream'
+      });
+      
+      const writer = fs.createWriteStream(localPath);
+      response.data.pipe(writer);
+      
+      await new Promise<void>((resolve, reject) => {
+        writer.on('finish', () => resolve());
+        writer.on('error', (err) => reject(err));
+      });
+      inputPaths.push(localPath);
+    }
+
+    // Build FFmpeg command with trimming and concatenation
+    const command = ffmpeg();
+    
+    inputPaths.forEach(p => {
+      command.input(p);
+    });
+
+    let filterComplex = '';
+    let concatInputs = '';
+    
+    for (let i = 0; i < inputPaths.length; i++) {
+      const d = durations[i];
+      filterComplex += `[${i}:v]trim=duration=${d},setpts=PTS-STARTPTS[v${i}]; `;
+      filterComplex += `[${i}:a]atrim=duration=${d},asetpts=PTS-STARTPTS[a${i}]; `;
+      concatInputs += `[v${i}][a${i}]`;
+    }
+    
+    filterComplex += `${concatInputs}concat=n=${inputPaths.length}:v=1:a=1[outv][outa]`;
+
+    console.log(`Running FFmpeg filter complex: ${filterComplex}`);
+
+    command
+      .complexFilter(filterComplex)
+      .map('[outv]')
+      .map('[outa]')
+      .outputOptions('-c:v libx264')
+      .outputOptions('-pix_fmt yuv420p')
+      .outputOptions('-preset superfast')
+      .output(outputPath)
+      .on('start', (cmdline) => {
+        console.log(`Spawned FFmpeg with command: ${cmdline}`);
+      })
+      .on('error', (err) => {
+        console.error('FFmpeg error:', err.message);
+        res.status(500).json({ error: 'FFmpeg merging failed', details: err.message });
+        cleanupFiles(inputPaths, outputPath);
+      })
+      .on('end', () => {
+        console.log('Merging successfully finished!');
+        
+        res.download(outputPath, 'viral-ad-campaign.mp4', (downloadErr) => {
+          if (downloadErr) {
+            console.error('Error sending file to client:', downloadErr);
+          }
+          cleanupFiles(inputPaths, outputPath);
+        });
+      })
+      .run();
+
+  } catch (err: any) {
+    console.error('Error in merge-videos route:', err);
+    res.status(500).json({ error: 'Failed to process videos', details: err.message });
+    cleanupFiles(inputPaths, outputPath);
+  }
+});
+
+function cleanupFiles(inputs: string[], output: string) {
+  console.log('Starting cleanup of temporary files...');
+  inputs.forEach(p => {
+    if (fs.existsSync(p)) {
+      fs.unlink(p, () => {});
+    }
+  });
+  if (fs.existsSync(output)) {
+    fs.unlink(output, () => {});
+  }
+}
 
 // Serve static assets from compiled React client
 const productionPublicPath = path.join(__dirname, '../../client/dist');
