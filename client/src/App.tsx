@@ -80,9 +80,12 @@ export default function App() {
   const [productImage, setProductImage] = useState<string | null>(null);
   
   // API Keys (Prefilled, but customizable)
-  const [geminiKey, setGeminiKey] = useState<string>('');
-  const [klingKey, setKlingKey] = useState<string>('');
-  const [videoModel, setVideoModel] = useState<'kling' | 'gemini'>('kling');
+  const [geminiKey, setGeminiKey] = useState<string>(() => localStorage.getItem('gemini_api_key') || '');
+  const [klingKey, setKlingKey] = useState<string>(() => localStorage.getItem('kling_api_key') || '');
+  const [videoModel, setVideoModel] = useState<'kling' | 'gemini'>(() => {
+    const saved = localStorage.getItem('video_model');
+    return (saved === 'gemini' || saved === 'kling') ? saved : 'kling';
+  });
   const [showSettings, setShowSettings] = useState<boolean>(false);
 
   // Brand Analysis & Strategy
@@ -481,7 +484,11 @@ export default function App() {
                   type="password"
                   className="form-input"
                   value={geminiKey}
-                  onChange={(e) => setGeminiKey(e.target.value)}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setGeminiKey(val);
+                    localStorage.setItem('gemini_api_key', val);
+                  }}
                   placeholder="Enter Gemini Key"
                 />
                 <Sparkles className="form-input-icon" size={16} />
@@ -495,7 +502,11 @@ export default function App() {
                   type="password"
                   className="form-input"
                   value={klingKey}
-                  onChange={(e) => setKlingKey(e.target.value)}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setKlingKey(val);
+                    localStorage.setItem('kling_api_key', val);
+                  }}
                   placeholder="Enter Kling Key"
                 />
                 <Film className="form-input-icon" size={16} />
@@ -533,7 +544,11 @@ export default function App() {
                     WebkitAppearance: 'none'
                   }}
                   value={videoModel}
-                  onChange={(e) => setVideoModel(e.target.value as 'kling' | 'gemini')}
+                  onChange={(e) => {
+                    const val = e.target.value as 'kling' | 'gemini';
+                    setVideoModel(val);
+                    localStorage.setItem('video_model', val);
+                  }}
                 >
                   <option value="kling" style={{ background: '#1c192d', color: '#fff' }}>Kling AI Singapore (v3-Turbo)</option>
                   <option value="gemini" style={{ background: '#1c192d', color: '#fff' }}>Gemini Veo 3.1 (Google)</option>
@@ -870,7 +885,11 @@ export default function App() {
                     paddingRight: '12px'
                   }}
                   value={videoModel}
-                  onChange={(e) => setVideoModel(e.target.value as 'kling' | 'gemini')}
+                  onChange={(e) => {
+                    const val = e.target.value as 'kling' | 'gemini';
+                    setVideoModel(val);
+                    localStorage.setItem('video_model', val);
+                  }}
                 >
                   <option value="kling" style={{ background: '#1c192d', color: '#fff' }}>Kling AI v3-Turbo</option>
                   <option value="gemini" style={{ background: '#1c192d', color: '#fff' }}>Gemini Veo 3.1</option>

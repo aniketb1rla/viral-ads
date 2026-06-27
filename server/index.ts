@@ -545,7 +545,7 @@ app.post('/api/animate-video', async (req: Request, res: Response): Promise<void
     if (gKey) {
       try {
         // Veo 3.1 generate operation endpoint
-        const veoUrl = `https://generativelanguage.googleapis.com/v1beta/models/veo-3.1-generate-preview:predictLongRunning?key=${gKey}`;
+        const veoUrl = 'https://generativelanguage.googleapis.com/v1beta/models/veo-3.1-generate-preview:predictLongRunning';
         const veoPayload = {
           instances: [{
             prompt: combinedPrompt,
@@ -562,7 +562,12 @@ app.post('/api/animate-video', async (req: Request, res: Response): Promise<void
         };
 
         console.log('Submitting video task to Gemini Veo API...');
-        const response = await axios.post(veoUrl, veoPayload);
+        const response = await axios.post(veoUrl, veoPayload, {
+          headers: {
+            'x-goog-api-key': gKey,
+            'Content-Type': 'application/json'
+          }
+        });
         // Clear rawBase64 buffer reference
         rawBase64 = null;
 
@@ -728,9 +733,13 @@ app.post('/api/video-status', async (req: Request, res: Response): Promise<void>
     // 2. Real Veo tasks
     const gKey = geminiKey || process.env.GEMINI_API_KEY;
     try {
-      const veoPollUrl = `https://generativelanguage.googleapis.com/v1beta/${taskId}?key=${gKey}`;
+      const veoPollUrl = `https://generativelanguage.googleapis.com/v1beta/${taskId}`;
       console.log(`Polling Veo operation: ${veoPollUrl}`);
-      const pollResponse = await axios.get(veoPollUrl);
+      const pollResponse = await axios.get(veoPollUrl, {
+        headers: {
+          'x-goog-api-key': gKey
+        }
+      });
       
       const opData = pollResponse.data;
       if (opData.error) {
