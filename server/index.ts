@@ -482,8 +482,9 @@ Ensure the product in the generated scene looks exactly like the reference produ
 });
 
 // 4. Submit Image-to-Video Task to Kling AI or Gemini (Veo)
+// 4. Submit Image-to-Video Task to Kling AI or Gemini (Veo)
 app.post('/api/animate-video', async (req: Request, res: Response): Promise<void> => {
-  const { imageBase64, prompt, audio, voiceProfile, klingKey, geminiKey, videoModel } = req.body;
+  let { imageBase64, prompt, visual, audio, voiceProfile, klingKey, geminiKey, videoModel } = req.body;
 
   if (!imageBase64) {
     res.status(400).json({ error: 'Image Base64 data is required' });
@@ -491,13 +492,49 @@ app.post('/api/animate-video', async (req: Request, res: Response): Promise<void
   }
 
   // Remove any base64 prefix as models require raw base64 string
-  const rawBase64 = imageBase64.replace(/^data:image\/[a-z]+;base64,/, '');
+  let rawBase64: string | null = imageBase64.replace(/^data:image\/[a-z]+;base64,/, '');
+
+  // Extract mime type if present, default to image/png
+  let mimeType = 'image/png';
+  const mimeMatch = imageBase64.match(/^data:(image\/[a-z]+);base64,/);
+  if (mimeMatch) {
+    mimeType = mimeMatch[1];
+  }
+
+  // Clear original large imageBase64 from memory immediately to avoid OOM
+  req.body.imageBase64 = null;
+  imageBase64 = null;
 
   // Combine prompt, audio, and voice profile
   let combinedPrompt = prompt || 'animate smoothly with camera pan';
-  if (audio && !combinedPrompt.toLowerCase().includes('voiceover') && !combinedPrompt.toLowerCase().includes('audio')) {
-    const voiceStyle = voiceProfile ? ` spoken by ${voiceProfile}` : '';
-    combinedPrompt += `. Audio voiceover: "${audio}"${voiceStyle}.`;
+  
+  if (videoModel === 'gemini') {
+    // For Veo 3.1, build a rich visual motion prompt by stripping Kling audio directives
+    let motionPart = prompt || '';
+    const audioIndex = motionPart.toLowerCase().indexOf('audio voiceover:');
+    if (audioIndex !== -1) {
+      motionPart = motionPart.substring(0, audioIndex).trim();
+    }
+    motionPart = motionPart.replace(/\.+$/, '').trim();
+
+    const visualPart = visual ? visual.trim().replace(/\.+$/, '') : '';
+    
+    if (visualPart && motionPart) {
+      combinedPrompt = `${visualPart}. Animated with: ${motionPart}, realistic motion, high fidelity.`;
+    } else if (visualPart) {
+      combinedPrompt = `${visualPart}. Animated with natural hand-held camera shake and realistic character motions.`;
+    } else if (motionPart) {
+      combinedPrompt = `${motionPart}, realistic character motion and natural camera movement.`;
+    } else {
+      combinedPrompt = 'animate smoothly with natural hand-held camera shake and realistic character motions';
+    }
+    
+    console.log(`[Veo Prompt Builder] Generated rich motion prompt: "${combinedPrompt}"`);
+  } else {
+    if (audio && !combinedPrompt.toLowerCase().includes('voiceover') && !combinedPrompt.toLowerCase().includes('audio')) {
+      const voiceStyle = voiceProfile ? ` spoken by ${voiceProfile}` : '';
+      combinedPrompt += `. Audio voiceover: "${audio}"${voiceStyle}.`;
+    }
   }
 
   if (videoModel === 'gemini') {
@@ -513,17 +550,22 @@ app.post('/api/animate-video', async (req: Request, res: Response): Promise<void
           instances: [{
             prompt: combinedPrompt,
             image: {
-              bytesBase64Encoded: rawBase64
+              bytesBase64Encoded: rawBase64,
+              mimeType: mimeType
             }
           }],
           parameters: {
             aspectRatio: '9:16',
+            resolution: '720p',
             durationSeconds: 5
           }
         };
 
         console.log('Submitting video task to Gemini Veo API...');
         const response = await axios.post(veoUrl, veoPayload);
+        // Clear rawBase64 buffer reference
+        rawBase64 = null;
+
         if (response.data && response.data.name) {
           veoTaskId = response.data.name; // returns "operations/..."
           isVeoSucceeded = true;
@@ -550,7 +592,13 @@ app.post('/api/animate-video', async (req: Request, res: Response): Promise<void
         const inputImgPath = path.join(tempDir, `input_${sessionId}.png`);
         const outputVidPath = path.join(tempVideosDir, `simulated_${sessionId}.mp4`);
         
-        fs.writeFileSync(inputImgPath, Buffer.from(rawBase64, 'base64'));
+        if (rawBase64) {
+          fs.writeFileSync(inputImgPath, Buffer.from(rawBase64, 'base64'));
+        } else {
+          throw new Error('Image data was already cleared or is invalid');
+        }
+        // Clear rawBase64 buffer reference immediately after write
+        rawBase64 = null;
         
         console.log(`Generating simulated UGC video via FFmpeg pan/zoom: ${outputVidPath}`);
         
@@ -558,6 +606,7 @@ app.post('/api/animate-video', async (req: Request, res: Response): Promise<void
           ffmpeg(inputImgPath)
             .loop(5)
             .outputOptions('-pix_fmt yuv420p')
+            .outputOptions('-threads 1') // Limit CPU/memory footprint of spawned FFmpeg process
             .videoFilters([
               {
                 filter: 'zoompan',
@@ -566,7 +615,7 @@ app.post('/api/animate-video', async (req: Request, res: Response): Promise<void
                   x: '(iw-iw/zoom)/2 + sin(on/4)*10',
                   y: '(ih-ih/zoom)/2 + cos(on/5)*10',
                   d: 125, // 5 seconds at 25fps
-                  s: '720x1280'
+                  s: '480x854' // Optimize resolution to use less than half the memory of 720x1280
                 }
               }
             ])
@@ -581,6 +630,9 @@ app.post('/api/animate-video', async (req: Request, res: Response): Promise<void
             })
             .on('error', (err) => {
               console.error('FFmpeg simulation error:', err.message);
+              if (fs.existsSync(inputImgPath)) {
+                fs.unlink(inputImgPath, () => {});
+              }
               reject(err);
             })
             .run();
@@ -624,6 +676,8 @@ app.post('/api/animate-video', async (req: Request, res: Response): Promise<void
           'Content-Type': 'application/json'
         }
       });
+      // Clear rawBase64 buffer reference
+      rawBase64 = null;
 
       const result = response.data;
       if (result.code !== 0) {
@@ -684,13 +738,77 @@ app.post('/api/video-status', async (req: Request, res: Response): Promise<void>
       }
       
       if (opData.done) {
-        const videoUri = opData.response?.generatedVideos?.[0]?.video?.uri;
+        const videoUri = opData.response?.generateVideoResponse?.generatedSamples?.[0]?.video?.uri || opData.response?.generatedVideos?.[0]?.video?.uri;
         if (!videoUri) {
           throw new Error('Veo video URL not found in completed operation response');
         }
         
-        // If GCS URI, resolve to simulated video so client can play it
-        if (videoUri.startsWith('gs://')) {
+        const cleanTaskId = taskId.replace(/^operations\//, '').replace(/[^a-zA-Z0-9_-]/g, '_');
+        const cacheFilename = `veo_${cleanTaskId}.mp4`;
+        const localPath = path.join(tempVideosDir, cacheFilename);
+        const localUrl = `${req.protocol}://${req.get('host')}/videos/${cacheFilename}`;
+
+        // Check if already downloaded/cached
+        if (fs.existsSync(localPath)) {
+          console.log(`Veo video already cached at ${localPath}`);
+          res.json({
+            task_status: 'succeed',
+            task_result: {
+              videos: [
+                {
+                  url: localUrl
+                }
+              ]
+            }
+          });
+          return;
+        }
+
+        if (videoUri.startsWith('https://')) {
+          console.log(`Downloading Veo video from ${videoUri} using x-goog-api-key...`);
+          try {
+            const writer = fs.createWriteStream(localPath);
+            const downloadResponse = await axios({
+              method: 'get',
+              url: videoUri,
+              headers: {
+                'x-goog-api-key': gKey
+              },
+              responseType: 'stream'
+            });
+            
+            downloadResponse.data.pipe(writer);
+            await new Promise<void>((resolve, reject) => {
+              writer.on('finish', () => resolve());
+              writer.on('error', (err) => reject(err));
+            });
+            
+            console.log(`Veo video successfully cached at ${localPath}`);
+            res.json({
+              task_status: 'succeed',
+              task_result: {
+                videos: [
+                  {
+                    url: localUrl
+                  }
+                ]
+              }
+            });
+          } catch (dlError: any) {
+            console.error(`Failed to download Veo video directly: ${dlError.message}`);
+            // Fallback: serve original URI if we couldn't download
+            res.json({
+              task_status: 'succeed',
+              task_result: {
+                videos: [
+                  {
+                    url: videoUri
+                  }
+                ]
+              }
+            });
+          }
+        } else if (videoUri.startsWith('gs://')) {
           console.warn(`Veo returned GCS URI: ${videoUri}. Falling back to simulated video...`);
           const sessionId = taskId.split('/').pop();
           res.json({
@@ -789,7 +907,7 @@ function ensureAudioStream(videoPath: string, index: number, sessionId: string, 
         const silentOutputPath = path.join(tempDir, `silent_injected_${sessionId}_${index}.mp4`);
         
         // Command to add a silent audio stream (using lavfi anullsrc) and copy video stream
-        const addSilentAudioCmd = `"${ffmpegExecutable}" -i "${videoPath}" -f lavfi -i anullsrc=channel_layout=stereo:sample_rate=44100 -c:v copy -c:a aac -shortest -y "${silentOutputPath}"`;
+        const addSilentAudioCmd = `"${ffmpegExecutable}" -i "${videoPath}" -f lavfi -i anullsrc=channel_layout=stereo:sample_rate=44100 -c:v copy -c:a aac -shortest -threads 1 -y "${silentOutputPath}"`;
         
         cp.exec(addSilentAudioCmd, (addErr: any) => {
           if (addErr) {
@@ -827,6 +945,7 @@ app.get('/api/merge-videos', async (req: Request, res: Response): Promise<void> 
   const tempDir = os.tmpdir();
   const sessionId = `${Date.now()}_${Math.floor(Math.random() * 10000)}`;
   const downloadedPaths: string[] = [];
+  const filesToCleanup: string[] = [];
   const outputFilename = `merged_ad_${sessionId}.mp4`;
   const outputPath = path.join(tempDir, outputFilename);
 
@@ -845,6 +964,7 @@ app.get('/api/merge-videos', async (req: Request, res: Response): Promise<void> 
         console.log(`Using local file for clip ${i + 1}: ${localPath}`);
       } else {
         localPath = path.join(tempDir, `clip_${sessionId}_${i}.mp4`);
+        filesToCleanup.push(localPath);
         console.log(`Downloading clip ${i + 1}: ${clipUrl} -> ${localPath}`);
         
         const response = await axios({
@@ -869,6 +989,9 @@ app.get('/api/merge-videos', async (req: Request, res: Response): Promise<void> 
     for (let i = 0; i < downloadedPaths.length; i++) {
       const ensuredPath = await ensureAudioStream(downloadedPaths[i], i, sessionId, tempDir);
       processedPaths.push(ensuredPath);
+      if (ensuredPath !== downloadedPaths[i]) {
+        filesToCleanup.push(ensuredPath);
+      }
     }
 
     // Build FFmpeg command with concatenation (no trimming to preserve full voiceover)
@@ -896,6 +1019,7 @@ app.get('/api/merge-videos', async (req: Request, res: Response): Promise<void> 
       .outputOptions('-c:v libx264')
       .outputOptions('-pix_fmt yuv420p')
       .outputOptions('-preset superfast')
+      .outputOptions('-threads 1') // Limit resource footprint of merge process
       .output(outputPath)
       .on('start', (cmdline) => {
         console.log(`Spawned FFmpeg with command: ${cmdline}`);
@@ -903,7 +1027,7 @@ app.get('/api/merge-videos', async (req: Request, res: Response): Promise<void> 
       .on('error', (err) => {
         console.error('FFmpeg error:', err.message);
         res.status(500).json({ error: 'FFmpeg merging failed', details: err.message });
-        cleanupFiles(downloadedPaths, outputPath);
+        cleanupFiles([...filesToCleanup, outputPath]);
       })
       .on('end', () => {
         console.log('Merging successfully finished!');
@@ -912,7 +1036,7 @@ app.get('/api/merge-videos', async (req: Request, res: Response): Promise<void> 
           if (downloadErr) {
             console.error('Error sending file to client:', downloadErr);
           }
-          cleanupFiles(downloadedPaths, outputPath);
+          cleanupFiles([...filesToCleanup, outputPath]);
         });
       })
       .run();
@@ -920,20 +1044,21 @@ app.get('/api/merge-videos', async (req: Request, res: Response): Promise<void> 
   } catch (err: any) {
     console.error('Error in merge-videos route:', err);
     res.status(500).json({ error: 'Failed to process videos', details: err.message });
-    cleanupFiles(downloadedPaths, outputPath);
+    cleanupFiles([...filesToCleanup, outputPath]);
   }
 });
 
-function cleanupFiles(inputs: string[], output: string) {
+function cleanupFiles(paths: string[]) {
   console.log('Starting cleanup of temporary files...');
-  inputs.forEach(p => {
+  paths.forEach(p => {
     if (fs.existsSync(p)) {
-      fs.unlink(p, () => {});
+      try {
+        fs.unlinkSync(p);
+      } catch (err: any) {
+        console.warn(`Failed to clean up file ${p}: ${err.message}`);
+      }
     }
   });
-  if (fs.existsSync(output)) {
-    fs.unlink(output, () => {});
-  }
 }
 
 // Serve static assets from compiled React client

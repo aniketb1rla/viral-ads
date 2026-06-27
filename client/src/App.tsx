@@ -349,6 +349,7 @@ export default function App() {
         body: JSON.stringify({
           imageBase64: frame.image,
           prompt: scene.animationPrompt,
+          visual: scene.visual,
           audio: scene.audio,
           voiceProfile: script?.voiceProfile,
           klingKey,
