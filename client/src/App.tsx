@@ -14,7 +14,8 @@ import {
   Image as ImageIcon,
   Loader2,
   RefreshCw,
-  FileText
+  FileText,
+  Plus
 } from 'lucide-react';
 
 let API_BASE = localStorage.getItem('api_base_url') || (window.location.hostname === 'localhost' ? 'http://localhost:3001' : window.location.origin);
@@ -76,8 +77,8 @@ export default function App() {
 
   // Setup Inputs
   const [url, setUrl] = useState<string>('');
-  const [productType, setProductType] = useState<'digital' | 'physical'>('digital');
-  const [productImage, setProductImage] = useState<string | null>(null);
+  const [productType, setProductType] = useState<'physical' | 'saas' | 'app' | 'finance' | 'healthcare'>('saas');
+  const [productImages, setProductImages] = useState<string[]>([]);
   
   // API Keys (Prefilled, but customizable)
   const [geminiKey, setGeminiKey] = useState<string>(() => localStorage.getItem('gemini_api_key') || '');
@@ -162,13 +163,15 @@ export default function App() {
 
   // Handle Drag & Drop / File Select for Product Image
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setProductImage(reader.result as string);
-      };
-      reader.readAsDataURL(file);
+    const files = e.target.files;
+    if (files) {
+      Array.from(files).forEach(file => {
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          setProductImages(prev => [...prev, reader.result as string]);
+        };
+        reader.readAsDataURL(file);
+      });
     }
   };
 
@@ -178,13 +181,15 @@ export default function App() {
 
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
-    const file = e.dataTransfer.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setProductImage(reader.result as string);
-      };
-      reader.readAsDataURL(file);
+    const files = e.dataTransfer.files;
+    if (files) {
+      Array.from(files).forEach(file => {
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          setProductImages(prev => [...prev, reader.result as string]);
+        };
+        reader.readAsDataURL(file);
+      });
     }
   };
 
@@ -237,7 +242,7 @@ export default function App() {
       const data = await requestApi('/api/analyze-brand', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url, geminiKey })
+        body: JSON.stringify({ url, productType, geminiKey })
       });
       setBrandProfile(data);
       // Auto select the first ad group as default
@@ -262,7 +267,7 @@ export default function App() {
       const data = await requestApi('/api/generate-script', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ brandProfile, selectedAdGroup, geminiKey })
+        body: JSON.stringify({ brandProfile, selectedAdGroup, productType, geminiKey })
       });
       setScript(data);
       // Initialize frame and video states for the scenes
@@ -309,7 +314,7 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           prompt: scene.imagePrompt,
-          productBase64: productType === 'physical' ? productImage : null,
+          productBase64s: productType === 'physical' ? productImages : [],
           anchorImage,
           geminiKey
         })
@@ -323,18 +328,28 @@ export default function App() {
   };
 
   const generateAllFrames = async () => {
-    // Generate sequentially to allow Scene 1 to complete and anchor Scenes 2 and 3
+    if (!script || !script.scenes) return;
+    const totalScenes = script.scenes.length;
+    if (totalScenes === 0) return;
+
+    // Generate Scene 1 first sequentially to serve as character/subject anchor
     const scene1Image = await generateFrameImage(1);
     
-    // Create a temporary updated list so Scene 2 and 3 have immediate access to Scene 1's completed image
-    const updatedList: FrameState[] = [
-      { sceneNumber: 1, image: scene1Image, status: scene1Image ? 'completed' : 'failed' },
-      { sceneNumber: 2, image: null, status: 'idle' },
-      { sceneNumber: 3, image: null, status: 'idle' }
-    ];
+    // Build the updated list dynamically
+    const updatedList: FrameState[] = Array.from({ length: totalScenes }, (_, idx) => {
+      const sNum = idx + 1;
+      if (sNum === 1) {
+        return { sceneNumber: 1, image: scene1Image, status: scene1Image ? 'completed' : 'failed' };
+      }
+      return { sceneNumber: sNum, image: null, status: 'idle' };
+    });
 
-    await generateFrameImage(2, updatedList);
-    await generateFrameImage(3, updatedList);
+    // Generate the remaining scenes in parallel
+    const promises = [];
+    for (let i = 2; i <= totalScenes; i++) {
+      promises.push(generateFrameImage(i, updatedList));
+    }
+    await Promise.all(promises);
   };
 
   // Phase B: Animate Frame using Kling AI (Singapore v3 API)
@@ -361,10 +376,13 @@ export default function App() {
         })
       });
 
-      setVideos(prev => prev.map(v => v.sceneNumber === sceneNumber ? { ...v, taskId: data.taskId, status: 'submitted' } : v));
-
-      // Start Polling
-      startVideoStatusPolling(sceneNumber, data.taskId);
+      if (data.status === 'succeed') {
+        setVideos(prev => prev.map(v => v.sceneNumber === sceneNumber ? { ...v, taskId: data.taskId, status: 'succeed', url: data.url } : v));
+      } else {
+        setVideos(prev => prev.map(v => v.sceneNumber === sceneNumber ? { ...v, taskId: data.taskId, status: 'submitted' } : v));
+        // Start Polling
+        startVideoStatusPolling(sceneNumber, data.taskId);
+      }
     } catch (err: any) {
       setVideos(prev => prev.map(v => v.sceneNumber === sceneNumber ? { ...v, status: 'failed', error: err.message } : v));
     }
@@ -551,7 +569,7 @@ export default function App() {
                   }}
                 >
                   <option value="kling" style={{ background: '#1c192d', color: '#fff' }}>Kling AI Singapore (v3-Turbo)</option>
-                  <option value="gemini" style={{ background: '#1c192d', color: '#fff' }}>Gemini Veo 3.1 (Google)</option>
+                  <option value="gemini" style={{ background: '#1c192d', color: '#fff' }}>Gemini Omni Flash (Google)</option>
                 </select>
                 <Film className="form-input-icon" size={16} />
               </div>
@@ -626,53 +644,99 @@ export default function App() {
 
           <div className="form-group">
             <label className="form-label">Product Type</label>
-            <div className="segment-control">
+            <div className="segment-control-grid">
               <button
-                className={`segment-btn ${productType === 'digital' ? 'active' : ''}`}
-                onClick={() => setProductType('digital')}
-              >
-                Digital (App/SaaS/Website)
-              </button>
-              <button
-                className={`segment-btn ${productType === 'physical' ? 'active' : ''}`}
+                type="button"
+                className={`segment-btn-grid ${productType === 'physical' ? 'active' : ''}`}
                 onClick={() => setProductType('physical')}
               >
-                Physical (Tangible Product)
+                <span>📦 Physical</span>
+                <span style={{ fontSize: '0.65rem', opacity: 0.7 }}>Tangible / Goods</span>
+              </button>
+              <button
+                type="button"
+                className={`segment-btn-grid ${productType === 'saas' ? 'active' : ''}`}
+                onClick={() => setProductType('saas')}
+              >
+                <span>💻 Software / SaaS</span>
+                <span style={{ fontSize: '0.65rem', opacity: 0.7 }}>Web Platforms</span>
+              </button>
+              <button
+                type="button"
+                className={`segment-btn-grid ${productType === 'app' ? 'active' : ''}`}
+                onClick={() => setProductType('app')}
+              >
+                <span>📱 Mobile App</span>
+                <span style={{ fontSize: '0.65rem', opacity: 0.7 }}>iOS / Android</span>
+              </button>
+              <button
+                type="button"
+                className={`segment-btn-grid ${productType === 'finance' ? 'active' : ''}`}
+                onClick={() => setProductType('finance')}
+              >
+                <span>💳 Finance / FinTech</span>
+                <span style={{ fontSize: '0.65rem', opacity: 0.7 }}>Banking / Money</span>
+              </button>
+              <button
+                type="button"
+                className={`segment-btn-grid ${productType === 'healthcare' ? 'active' : ''}`}
+                onClick={() => setProductType('healthcare')}
+              >
+                <span>🏥 Healthcare</span>
+                <span style={{ fontSize: '0.65rem', opacity: 0.7 }}>Medical / Wellness</span>
               </button>
             </div>
           </div>
 
           {productType === 'physical' && (
             <div className="form-group">
-              <label className="form-label">Upload Product Image (Accurate reference for Nano Banana Pro)</label>
+              <label className="form-label">Upload Product Images (Accurate references for Nano Banana Pro)</label>
               <div
                 className="upload-zone"
                 onDragOver={handleDragOver}
                 onDrop={handleDrop}
-                onClick={() => document.getElementById('product-file')?.click()}
+                onClick={() => {
+                  if (productImages.length === 0) {
+                    document.getElementById('product-file')?.click();
+                  }
+                }}
+                style={{ padding: productImages.length > 0 ? '16px' : '32px' }}
               >
                 <input
                   type="file"
                   id="product-file"
                   hidden
+                  multiple
                   accept="image/*"
                   onChange={handleFileChange}
                 />
-                {productImage ? (
-                  <div className="preview-container" onClick={(e) => e.stopPropagation()}>
-                    <img src={productImage} alt="Product Preview" className="preview-image" />
-                    <button
-                      className="remove-preview-btn"
-                      onClick={() => setProductImage(null)}
+                {productImages.length > 0 ? (
+                  <div className="previews-grid" onClick={(e) => e.stopPropagation()}>
+                    {productImages.map((img, idx) => (
+                      <div key={idx} className="preview-container-mini">
+                        <img src={img} alt={`Preview ${idx + 1}`} className="preview-image-mini" />
+                        <button
+                          type="button"
+                          className="remove-preview-btn-mini"
+                          onClick={() => setProductImages(prev => prev.filter((_, i) => i !== idx))}
+                        >
+                          <Trash2 size={12} />
+                        </button>
+                      </div>
+                    ))}
+                    <div 
+                      className="add-more-preview-box" 
+                      onClick={() => document.getElementById('product-file')?.click()}
                     >
-                      <Trash2 size={12} />
-                    </button>
+                      <Plus size={20} />
+                      <span style={{ fontSize: '0.65rem', fontWeight: 600 }}>Add Photo</span>
+                    </div>
                   </div>
                 ) : (
                   <>
                     <Upload className="upload-icon" size={32} />
-                    <span className="upload-text">Drag & drop product photo or click to browse</span>
-                    <span className="upload-subtext">JPG, PNG up to 10MB</span>
+                    <span className="upload-text">Drag & drop product photos or click to browse</span>
+                    <span className="upload-subtext">JPG, PNG up to 10MB (Multiple uploads supported)</span>
                   </>
                 )}
               </div>
@@ -863,7 +927,7 @@ export default function App() {
               Ad Production Studio
             </h1>
             <p className="sub-title" style={{ marginBottom: '24px' }}>
-              Generate frame reference images via Nano Banana Pro and animate them using Kling AI v3-Turbo or Gemini Veo 3.1 (720p, 9:16, 10s).
+              Generate frame reference images via Nano Banana Pro and animate them using Kling AI v3-Turbo or Gemini Omni Flash (720p, 9:16, 10s).
             </p>
 
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '16px', alignItems: 'center', marginBottom: '32px' }}>
@@ -892,7 +956,7 @@ export default function App() {
                   }}
                 >
                   <option value="kling" style={{ background: '#1c192d', color: '#fff' }}>Kling AI v3-Turbo</option>
-                  <option value="gemini" style={{ background: '#1c192d', color: '#fff' }}>Gemini Veo 3.1</option>
+                  <option value="gemini" style={{ background: '#1c192d', color: '#fff' }}>Gemini Omni Flash</option>
                 </select>
               </div>
 
@@ -901,7 +965,7 @@ export default function App() {
                 onClick={animateAllFrames}
                 disabled={frames.some(f => f.status !== 'completed')}
               >
-                <Video size={18} /> Animate All with {videoModel === 'kling' ? 'Kling AI' : 'Gemini Veo'}
+                <Video size={18} /> Animate All with {videoModel === 'kling' ? 'Kling AI' : 'Gemini Omni Flash'}
               </button>
             </div>
 

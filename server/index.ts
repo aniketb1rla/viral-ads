@@ -9,6 +9,26 @@ import ffmpeg from 'fluent-ffmpeg';
 import { path as ffmpegPath } from '@ffmpeg-installer/ffmpeg';
 ffmpeg.setFfmpegPath(ffmpegPath);
 
+import { GoogleAuth } from 'google-auth-library';
+
+const googleAuth = new GoogleAuth({
+  scopes: 'https://www.googleapis.com/auth/cloud-platform'
+});
+
+async function getVertexAccessToken(): Promise<string> {
+  try {
+    const client = await googleAuth.getClient();
+    const tokenResponse = await client.getAccessToken();
+    if (!tokenResponse.token) {
+      throw new Error('No access token returned');
+    }
+    return tokenResponse.token;
+  } catch (error: any) {
+    console.error('Failed to get GCP Vertex Access Token:', error.message);
+    throw new Error('GCP Authentication failed. Please ensure Application Default Credentials (ADC) or GOOGLE_APPLICATION_CREDENTIALS are set up correctly.');
+  }
+}
+
 dotenv.config();
 
 const app = express();
@@ -186,7 +206,7 @@ JSON Schema:
 
 // 2. Generate Meta Ad Script & Storyboard (3 scenes)
 app.post('/api/generate-script', async (req: Request, res: Response): Promise<void> => {
-  const { brandProfile, selectedAdGroup, geminiKey } = req.body;
+  const { brandProfile, selectedAdGroup, productType, geminiKey } = req.body;
 
   const key = geminiKey || process.env.GEMINI_API_KEY;
   if (!key) {
@@ -194,17 +214,40 @@ app.post('/api/generate-script', async (req: Request, res: Response): Promise<vo
     return;
   }
 
+  let productSpecificStrategy = '';
+  if (productType === 'saas' || productType === 'finance' || productType === 'healthcare') {
+    productSpecificStrategy = `
+PRODUCT TYPE SPECIFIC RULE (Non-physical / SaaS / Finance / Healthcare):
+This is a non-tangible/digital/service product. You MUST use a highly relatable, digestible analogy script.
+An analogy script explains the product/service by comparing it to a common, easily understood real-world concept (e.g. "Trying to manage your project tasks without software X is like trying to carry 10 watermelons at once. That's why we built X...").
+Make the analogy simple, casual, and highly relatable to a general audience. The visual scenes should dramatize this analogy visually!`;
+  } else if (productType === 'app') {
+    productSpecificStrategy = `
+PRODUCT TYPE SPECIFIC RULE (Mobile App):
+This is a mobile application. Create a clear app usecase/walkthrough video script.
+Show the creator using the app on their phone or a simulated screen-recording of the app's utility to solve a specific problem in their daily life (e.g., "POV: You finally found the app that does X in 2 taps..."). The scenes should show someone interacting with a beautiful smartphone interface.`;
+  } else {
+    // physical or default
+    productSpecificStrategy = `
+PRODUCT TYPE SPECIFIC RULE (Physical / Tangible Product):
+This is a physical, tangible product. Create a script featuring a professional studio shoot & creators showcasing the product in their hands, demonstrating how it looks and feels, UGC creator hands-on reviews, or aesthetic close-up shoots of the product.
+CRITICAL VISUAL CONSTRAINT: Make sure no cameras, lights, or photography gear are literally visible in any of the visual prompts. Do not show any cameras, studio lights, tripods, softboxes, or photography equipment in the visual scene descriptions or image prompts. The scene must look like a clean finished photo, not a behind-the-scenes set photograph.`;
+  }
+
   const prompt = `You are a professional Meta Ads UGC (User Generated Content) scriptwriter and video producer specializing in high-converting, scroll-stopping, authentic vertical videos (9:16, 10 seconds duration).
 Your goal is to write a script and storyboard that feels like a real creator's post on TikTok or Instagram Reels, rather than a polished corporate commercial.
 
 UGC STYLE STORYTELLING PRINCIPLES:
-1. Authentic Hook: Start Scene 1 with an instant, relatable hook. Use selfie style or a creator talking directly to their phone, screen-recording, or casual vlog opening. Examples: "I was today years old when I found this...", "POV: your skincare routine is actually working", "This one product literally saved my sanity...", "I never do reviews, but...".
+1. Authentic Hook: Start Shot/Scene 1 with an instant, relatable visual hook. Use selfie style or a creator talking directly to their phone, screen-recording, or casual vlog opening. Examples: "I was today years old when I found this...", "POV: your skincare routine is actually working", "This one product literally saved my sanity...", "I never do reviews, but...". The first shot must be a powerful thumbstop hook!
 2. Creator Dialogue: The voiceover must sound like a real person talking naturally to their friends. Avoid advertising buzzwords, overly polished voiceover styles, or formal statements. Use casual, conversational, and enthusiastic speech.
 3. Natural Visuals: The visual setting should look like real life. A cozy bedroom, a bright living room, a messy kitchen, a casual coffee shop, or holding the phone while walking down the street. It must look like smartphone footage (raw, hand-held, slightly imperfect).
 
 DEMOGRAPHIC & VOICE ANALYSIS:
 1. Analyze the brand profile and target audience to determine key target demographics (e.g. millennial parents, gen-Z athletes, corporate professionals, college students).
-2. Recommend a highly relevant Voice Profile for the Kling voiceover (gender, age group, vocal characteristics, accent, and tone) that best connects with this target demographic (e.g., "enthusiastic, fast-paced Gen-Z female voice with a modern American accent", "confident, warm 35-year-old male voice with a calm British accent").
+2. Recommend a highly relevant, consistent Voice Profile for the voiceover (gender, age group, vocal characteristics, accent, and tone) that best connects with this target demographic (e.g., "warm, friendly, confident 25-year-old female voice with a clear American accent").
+3. Make sure the voice over voice is EXACTLY the same in all the frames by explicitly referencing this voice profile in the animation prompt of each scene.
+
+${productSpecificStrategy}
 
 CRITICAL SAFETY DIRECTIVE:
 If the brand or product is an undergarment, sleepwear, personal hygiene, or body-related product (e.g., underwear, bras, period panties, pads), do not generate scripts with sexually suggestive, intimate, or anatomically descriptive wording. Focus on lifestyle, flat-lay compositions, abstract fabrics, clean design, or activewear. Avoid words like "panties", "underwear", "bra", "lingerie", "period", "sexy", "intimate", "nude", "naked", or "body shape" in the visual descriptions, image prompts, or animation prompts.
@@ -222,28 +265,28 @@ Ad Group Strategy:
 - Audience Segment: ${selectedAdGroup.audience}
 - Core Message: ${selectedAdGroup.message}
 
-The video is 10 seconds long and must be broken down into exactly 3 sequential scenes.
+The video is 10 seconds long and must be broken down into a storyboard of exactly 3 or 4 sequential scenes/shots. Choose the optimal number of scenes (either 3 or 4) to tell this story.
 For each scene, output:
-1. Scene Number (1, 2, 3)
-2. Duration: A number representing the duration of this scene in seconds (e.g. 3.0, 3.5, 3.5), such that the sum of the durations of all 3 scenes is exactly 10.0 seconds.
+1. Scene Number (1, 2, 3, etc.)
+2. Duration: A number representing the duration of this scene in seconds (e.g. 2.5, 3.0), such that the sum of the durations of all scenes is exactly 10.0 seconds.
 3. Audio: The creator voiceover (VO) dialogue and sound effects. Keep it conversational, casual, and authentic.
 4. Visual description: Detailed description of the scene action. Specify the creator's look, expression, and natural movements.
-5. Image Prompt: An extremely descriptive, photo-realistic text-to-image prompt to be used in Gemini 3 Pro Image (Nano Banana Pro) to generate a high-fidelity 9:16 reference image. Specify the subject (e.g., "A young creator holding their phone"), environment (e.g., "candid indoor lighting, cozy apartment bedroom"), composition, lighting (e.g., "natural morning light coming through the window"), camera angle (e.g., "smartphone selfie-style photo", "candid hand-held phone camera shot"), and color palette. To make it look like UGC, explicitly add terms like: "UGC style, shot on phone camera, clean candid photo, amateur photography, natural indoor lighting, real-life environment, candid facial expression". CRITICAL: DO NOT include any phone overlays, mobile interfaces, battery icons, recording indicators, red record dots, device borders, or text. The image must be a clean photograph, not a screenshot of a phone screen or camera interface. To prevent triggering strict AI safety filters, use abstract or safe styling where appropriate (e.g. activewear, lifestyle shot). Never use flagged words like "panties", "underwear", "bra", "lingerie", "nude", or "sexuality".
-6. Animation Prompt: A descriptive motion and audio instruction for Kling AI to animate the reference image. Instruct Kling to simulate hand-held camera movements (e.g. "subtle phone camera shake, natural blinking, slight head nod, hands tilting the product toward the lens, casual creator speaking movements"). Format it exactly as: '[visual motion description]. Audio voiceover: "[exact voiceover text to be spoken by a voice actor]" spoken by [recommended voice profile details, e.g., an enthusiastic Gen-Z female voice] with [ambient sound effects / background music description].' The voiceover text MUST match the voiceover/narration written in the "audio" field of this scene so Kling can generate the correct speech/sound.
+5. Image Prompt: An extremely descriptive, photo-realistic text-to-image prompt to be used in Gemini 3 Pro Image (Nano Banana Pro) to generate a high-fidelity 9:16 reference image. Specify the subject, environment, composition, lighting, camera angle, and color palette. To make it look like UGC, explicitly add terms like: "UGC style, shot on phone camera, clean candid photo, amateur photography, natural indoor lighting, real-life environment, candid facial expression". CRITICAL: DO NOT include any phone overlays, mobile interfaces, battery icons, recording indicators, red record dots, device borders, or text. The image must be a clean photograph. NEVER show any cameras, studio lights, tripods, softboxes, or photography equipment visible in the image itself.
+6. Animation Prompt: A descriptive motion and audio instruction for animating the reference image. Instruct the model to simulate natural motion (e.g. "subtle phone camera shake, natural blinking, slight head nod, hands tilting the product toward the lens, casual creator speaking movements"). Format it exactly as: '[visual motion description]. Audio voiceover: "[exact voiceover text to be spoken by a voice actor]" spoken by [exact voice profile details] with [ambient sound effects / background music description].' The voiceover text MUST match the voiceover/narration written in the "audio" field of this scene. The voice profile description must be identical in all scenes to ensure the generated voiceover has the same voice character.
 
 Return the response in strict JSON format matching the schema below:
 {
   "title": "Ad Campaign Script Title",
-  "targetDemographics": "Concise target demographics (e.g. Gen-Z women interested in sustainable comfort)",
-  "voiceProfile": "Vocal style configuration (e.g., A confident, energetic young female voice with an American accent)",
+  "targetDemographics": "Concise target demographics",
+  "voiceProfile": "Vocal style configuration (e.g., A warm, friendly, confident 25-year-old female voice with a clear American accent)",
   "scenes": [
     {
       "sceneNumber": 1,
-      "duration": 3.3,
+      "duration": 2.5,
       "audio": "Audio description (VO/SFX)",
       "visual": "Visual description of action",
       "imagePrompt": "Detailed prompt for Nano Banana Pro image generation (9:16 aspect ratio)",
-      "animationPrompt": "Motion instructions for Kling AI image-to-video animation including voiceover and voice profile"
+      "animationPrompt": "Motion instructions for image-to-video animation including voiceover and voice profile"
     }
   ]
 }`;
@@ -305,7 +348,7 @@ Return the response in strict JSON format matching the schema below:
 
 // 3. Generate Reference Image via Nano Banana Pro (Gemini 3 Pro Image)
 app.post('/api/generate-image', async (req: Request, res: Response): Promise<void> => {
-  const { prompt, productBase64, anchorImage, geminiKey } = req.body;
+  const { prompt, productBase64, productBase64s, anchorImage, geminiKey } = req.body;
 
   if (!prompt) {
     res.status(400).json({ error: 'Prompt is required' });
@@ -339,15 +382,18 @@ app.post('/api/generate-image', async (req: Request, res: Response): Promise<voi
       parts.push({
         text: `You are generating a sequel scene. First, look at the attached reference image of the previous scene. Analyze the character, their face geometry, hairstyle, clothing, colors, setting, and background style.
 Then, generate a high-quality vertical 9:16 advertising image of the scene scenario described below: ${prompt}.
-Ensure the character, subject identity, colors, and visual style remain completely consistent with the attached reference image. Keep the same actor/character identity.`
+Ensure the character, subject identity, colors, and visual style remain completely consistent with the attached reference image. Keep the same actor/character identity. Make sure no cameras, lights, or photography gear are literally visible in the frame (no studio lights, tripods, softboxes, or photography equipment visible in the image itself).`
       });
     }
 
-    // If a reference product image is provided, include it in the input parts
-    if (productBase64) {
-      // Clean prefix if any and extract exact mimeType
-      const rawBase64 = productBase64.replace(/^data:image\/[a-z]+;base64,/, '');
-      const mimeMatch = productBase64.match(/^data:(image\/[a-z]+);base64,/);
+    // Process product images (supports multi-image array or single fallback)
+    const imagesToProcess = productBase64s && Array.isArray(productBase64s)
+      ? productBase64s
+      : (productBase64 ? [productBase64] : []);
+
+    imagesToProcess.forEach((imgBase64: string) => {
+      const rawBase64 = imgBase64.replace(/^data:image\/[a-z]+;base64,/, '');
+      const mimeMatch = imgBase64.match(/^data:(image\/[a-z]+);base64,/);
       const mimeType = mimeMatch ? mimeMatch[1] : 'image/jpeg';
       
       parts.push({
@@ -356,17 +402,20 @@ Ensure the character, subject identity, colors, and visual style remain complete
           data: rawBase64
         }
       });
+    });
+
+    if (imagesToProcess.length > 0) {
       parts.push({
-        text: `You are generating an advertising image. First, analyze the attached reference image of the product. Understand its design, shape, labels, branding, and color.
+        text: `You are generating an advertising image. First, analyze the attached ${imagesToProcess.length} reference image(s) of the product showing it from various angles, lighting, or details. Understand its design, shape, labels, branding, and color.
 Then, generate a high-quality vertical 9:16 image of the product in this scenario: ${prompt}.
-Ensure the product in the generated scene looks exactly like the reference product in its shape, details, and branding. Maintain accurate physical features.`
+Ensure the product in the generated scene looks exactly like the reference product in its shape, details, and branding. Maintain accurate physical features. Make sure no cameras, lights, or photography gear are literally visible in the frame (no studio lights, tripods, softboxes, or photography equipment visible in the image itself).`
       });
     }
     
     // Fallback: If neither product nor anchor image is provided, generate from prompt text directly
-    if (!productBase64 && !anchorImage) {
+    if (imagesToProcess.length === 0 && !anchorImage) {
       parts.push({
-        text: `Generate a high-quality vertical 9:16 advertising image of: ${prompt}. Cinematic lighting, 8k resolution, photorealistic, professional product photography.`
+        text: `Generate a high-quality vertical 9:16 advertising image of: ${prompt}. Cinematic lighting, 8k resolution, photorealistic, professional product photography. Make sure no cameras, lights, or photography gear are literally visible in the frame (no studio lights, tripods, softboxes, or photography equipment visible in the image itself).`
       });
     }
 
@@ -505,155 +554,167 @@ app.post('/api/animate-video', async (req: Request, res: Response): Promise<void
   req.body.imageBase64 = null;
   imageBase64 = null;
 
-  // Combine prompt, audio, and voice profile
+  // Combine prompt, audio, and voice profile for both models
   let combinedPrompt = prompt || 'animate smoothly with camera pan';
-  
-  if (videoModel === 'gemini') {
-    // For Veo 3.1, build a rich visual motion prompt by stripping Kling audio directives
-    let motionPart = prompt || '';
-    const audioIndex = motionPart.toLowerCase().indexOf('audio voiceover:');
-    if (audioIndex !== -1) {
-      motionPart = motionPart.substring(0, audioIndex).trim();
-    }
-    motionPart = motionPart.replace(/\.+$/, '').trim();
-
-    const visualPart = visual ? visual.trim().replace(/\.+$/, '') : '';
-    
-    if (visualPart && motionPart) {
-      combinedPrompt = `${visualPart}. Animated with: ${motionPart}, realistic motion, high fidelity.`;
-    } else if (visualPart) {
-      combinedPrompt = `${visualPart}. Animated with natural hand-held camera shake and realistic character motions.`;
-    } else if (motionPart) {
-      combinedPrompt = `${motionPart}, realistic character motion and natural camera movement.`;
-    } else {
-      combinedPrompt = 'animate smoothly with natural hand-held camera shake and realistic character motions';
-    }
-    
-    console.log(`[Veo Prompt Builder] Generated rich motion prompt: "${combinedPrompt}"`);
-  } else {
-    if (audio && !combinedPrompt.toLowerCase().includes('voiceover') && !combinedPrompt.toLowerCase().includes('audio')) {
-      const voiceStyle = voiceProfile ? ` spoken by ${voiceProfile}` : '';
-      combinedPrompt += `. Audio voiceover: "${audio}"${voiceStyle}.`;
-    }
+  if (audio && !combinedPrompt.toLowerCase().includes('voiceover') && !combinedPrompt.toLowerCase().includes('audio')) {
+    const voiceStyle = voiceProfile ? ` spoken by ${voiceProfile}` : '';
+    combinedPrompt += `. Audio voiceover: "${audio}"${voiceStyle}.`;
   }
 
   if (videoModel === 'gemini') {
-    const gKey = geminiKey || process.env.GEMINI_API_KEY;
-    let isVeoSucceeded = false;
-    let veoTaskId = '';
+    let isOmniSucceeded = false;
+    let omniTaskId = '';
+    let omniUrl = '';
 
-    if (gKey) {
-      try {
-        // Veo 3.1 generate operation endpoint
-        const veoUrl = 'https://generativelanguage.googleapis.com/v1beta/models/veo-3.1-generate-preview:predictLongRunning';
-        const veoPayload = {
-          instances: [{
-            prompt: combinedPrompt,
-            image: {
-              bytesBase64Encoded: rawBase64,
-              mimeType: mimeType
+    try {
+      console.log('Retrieving Vertex AI access token via google-auth-library...');
+      const accessToken = await getVertexAccessToken();
+
+      const projectId = req.body.projectId || process.env.GCP_PROJECT || 'thermal-apricot-460710-d4';
+      const location = req.body.location || process.env.GCP_LOCATION || 'global';
+
+      const interactionsUrl = `https://global-aiplatform.googleapis.com/v1beta/projects/${projectId}/locations/${location}/interactions`;
+      
+      const payload = {
+        model: 'gemini-omni-flash-preview',
+        input: [
+          {
+            type: 'image',
+            data: rawBase64,
+            mime_type: mimeType
+          },
+          {
+            type: 'text',
+            text: `Animate this starting frame. Motion prompt: ${prompt || 'smooth camera movement, natural character animation'}. Visual action description: ${visual || ''}. Audio voiceover: "${audio || ''}" spoken by ${voiceProfile || 'a friendly young adult voice'}.`
+          }
+        ]
+      };
+
+      console.log(`Submitting video interaction to Gemini Omni Flash API at location: ${location}...`);
+      const response = await axios.post(interactionsUrl, payload, {
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Api-Revision': '2026-05-20',
+          'Content-Type': 'application/json'
+        },
+        timeout: 90000 // 90 seconds timeout for synchronous generation
+      });
+
+      // Clear rawBase64 buffer reference
+      rawBase64 = null;
+
+      const interaction = response.data;
+      let videoData: string | null = null;
+      let videoMimeType = 'video/mp4';
+
+      if (interaction && Array.isArray(interaction.steps)) {
+        for (const step of interaction.steps) {
+          if (step.type === 'model_output' && Array.isArray(step.content)) {
+            for (const part of step.content) {
+              if (part.type === 'video' && part.data) {
+                videoData = part.data;
+                if (part.mime_type) {
+                  videoMimeType = part.mime_type;
+                }
+                break;
+              }
             }
-          }],
-          parameters: {
-            aspectRatio: '9:16',
-            resolution: '720p',
-            durationSeconds: 5
           }
-        };
-
-        console.log('Submitting video task to Gemini Veo API...');
-        const response = await axios.post(veoUrl, veoPayload, {
-          headers: {
-            'x-goog-api-key': gKey,
-            'Content-Type': 'application/json'
-          }
-        });
-        // Clear rawBase64 buffer reference
-        rawBase64 = null;
-
-        if (response.data && response.data.name) {
-          veoTaskId = response.data.name; // returns "operations/..."
-          isVeoSucceeded = true;
-          console.log(`Gemini Veo task created successfully: ${veoTaskId}`);
-          
-          res.json({
-            taskId: veoTaskId,
-            status: 'submitted'
-          });
-          return;
+          if (videoData) break;
         }
-      } catch (veoError: any) {
-        console.warn('Gemini Veo API call failed or billing not enabled. Falling back to local FFmpeg video animation simulator...', veoError.response?.data || veoError.message);
       }
-    } else {
-      console.warn('No Gemini API Key provided for video animation. Falling back to local FFmpeg video animation simulator...');
+
+      if (videoData) {
+        const sessionId = `${Date.now()}_${Math.floor(Math.random() * 10000)}`;
+        const outputVidFilename = `omni_${sessionId}.mp4`;
+        const outputVidPath = path.join(tempVideosDir, outputVidFilename);
+        
+        fs.writeFileSync(outputVidPath, Buffer.from(videoData, 'base64'));
+        
+        omniTaskId = `operations/omni_${sessionId}`;
+        omniUrl = `/videos/${outputVidFilename}`;
+        isOmniSucceeded = true;
+        
+        console.log(`Gemini Omni Flash video generated successfully: ${outputVidPath}`);
+        
+        res.json({
+          taskId: omniTaskId,
+          status: 'succeed',
+          url: omniUrl
+        });
+        return;
+      } else {
+        throw new Error('Omni Flash response did not contain inline video base64 data.');
+      }
+    } catch (omniError: any) {
+      console.warn('Gemini Omni Flash API call failed. Falling back to local FFmpeg video animation simulator...', omniError.response?.data || omniError.message);
     }
+
+  // Fallback / Kling path below
 
     // Fallback: Generate simulated video via FFmpeg pan/zoom
-    if (!isVeoSucceeded) {
-      try {
-        const sessionId = `${Date.now()}_${Math.floor(Math.random() * 10000)}`;
-        const tempDir = os.tmpdir();
-        const inputImgPath = path.join(tempDir, `input_${sessionId}.png`);
-        const outputVidPath = path.join(tempVideosDir, `simulated_${sessionId}.mp4`);
-        
-        if (rawBase64) {
-          fs.writeFileSync(inputImgPath, Buffer.from(rawBase64, 'base64'));
-        } else {
-          throw new Error('Image data was already cleared or is invalid');
-        }
-        // Clear rawBase64 buffer reference immediately after write
-        rawBase64 = null;
-        
-        console.log(`Generating simulated UGC video via FFmpeg pan/zoom: ${outputVidPath}`);
-        
-        await new Promise<void>((resolve, reject) => {
-          ffmpeg(inputImgPath)
-            .loop(5)
-            .outputOptions('-pix_fmt yuv420p')
-            .outputOptions('-threads 1') // Limit CPU/memory footprint of spawned FFmpeg process
-            .videoFilters([
-              {
-                filter: 'zoompan',
-                options: {
-                  z: '1.15',
-                  x: '(iw-iw/zoom)/2 + sin(on/4)*10',
-                  y: '(ih-ih/zoom)/2 + cos(on/5)*10',
-                  d: 125, // 5 seconds at 25fps
-                  s: '480x854' // Optimize resolution to use less than half the memory of 720x1280
-                }
-              }
-            ])
-            .fps(25)
-            .output(outputVidPath)
-            .on('end', () => {
-              console.log('Simulated UGC video compiled successfully.');
-              if (fs.existsSync(inputImgPath)) {
-                fs.unlink(inputImgPath, () => {});
-              }
-              resolve();
-            })
-            .on('error', (err) => {
-              console.error('FFmpeg simulation error:', err.message);
-              if (fs.existsSync(inputImgPath)) {
-                fs.unlink(inputImgPath, () => {});
-              }
-              reject(err);
-            })
-            .run();
-        });
-
-        res.json({
-          taskId: `operations/simulated_${sessionId}`,
-          status: 'succeed',
-          url: `/videos/simulated_${sessionId}.mp4`
-        });
-      } catch (err: any) {
-        console.error('Failed to generate simulated video:', err.message);
-        res.status(500).json({ error: 'Gemini video simulation failed', details: err.message });
+    try {
+      const sessionId = `${Date.now()}_${Math.floor(Math.random() * 10000)}`;
+      const tempDir = os.tmpdir();
+      const inputImgPath = path.join(tempDir, `input_${sessionId}.png`);
+      const outputVidPath = path.join(tempVideosDir, `simulated_${sessionId}.mp4`);
+      
+      if (rawBase64) {
+        fs.writeFileSync(inputImgPath, Buffer.from(rawBase64, 'base64'));
+      } else {
+        throw new Error('Image data was already cleared or is invalid');
       }
-      return;
+      // Clear rawBase64 buffer reference immediately after write
+      rawBase64 = null;
+      
+      console.log(`Generating simulated UGC video via FFmpeg pan/zoom: ${outputVidPath}`);
+      
+      await new Promise<void>((resolve, reject) => {
+        ffmpeg(inputImgPath)
+          .loop(5)
+          .outputOptions('-pix_fmt yuv420p')
+          .outputOptions('-threads 1') // Limit CPU/memory footprint of spawned FFmpeg process
+          .videoFilters([
+            {
+              filter: 'zoompan',
+              options: {
+                z: '1.15',
+                x: '(iw-iw/zoom)/2 + sin(on/4)*10',
+                y: '(ih-ih/zoom)/2 + cos(on/5)*10',
+                d: 125, // 5 seconds at 25fps
+                s: '480x854' // Optimize resolution to use less than half the memory of 720x1280
+              }
+            }
+          ])
+          .fps(25)
+          .output(outputVidPath)
+          .on('end', () => {
+            console.log('Simulated UGC video compiled successfully.');
+            if (fs.existsSync(inputImgPath)) {
+              fs.unlink(inputImgPath, () => {});
+            }
+            resolve();
+          })
+          .on('error', (err) => {
+            console.error('FFmpeg simulation error:', err.message);
+            if (fs.existsSync(inputImgPath)) {
+              fs.unlink(inputImgPath, () => {});
+            }
+            reject(err);
+          })
+          .run();
+      });
+
+      res.json({
+        taskId: `operations/simulated_${sessionId}`,
+        status: 'succeed',
+        url: `/videos/simulated_${sessionId}.mp4`
+      });
+    } catch (err: any) {
+      console.error('Failed to generate simulated video:', err.message);
+      res.status(500).json({ error: 'Gemini video simulation failed', details: err.message });
     }
+    return;
   } else {
     // Kling AI Flow
     const key = klingKey || process.env.KLING_API_KEY;
@@ -717,6 +778,22 @@ app.post('/api/video-status', async (req: Request, res: Response): Promise<void>
     // 1. Simulated Gemini tasks
     if (taskId.startsWith('operations/simulated_')) {
       const filename = taskId.substring(11); // e.g. "simulated_..."
+      res.json({
+        task_status: 'succeed',
+        task_result: {
+          videos: [
+            {
+              url: `${req.protocol}://${req.get('host')}/videos/${filename}.mp4`
+            }
+          ]
+        }
+      });
+      return;
+    }
+
+    // 2. Omni Flash tasks
+    if (taskId.startsWith('operations/omni_')) {
+      const filename = taskId.substring(11); // e.g. "omni_..."
       res.json({
         task_status: 'succeed',
         task_result: {
